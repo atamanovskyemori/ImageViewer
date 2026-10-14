@@ -8,40 +8,117 @@
         Background="#FF1E1E1E"
         PreviewKeyDown="Window_PreviewKeyDown">
 
-    <Grid>
-        <!--
-            Canvas は子要素をレイアウトでクリップしないので、
-            大きな画像を RenderTransform で拡大・移動しても欠けない。
-            はみ出た分は ClipToBounds で切る。
-        -->
-        <Canvas x:Name="Viewport"
-                Background="#FF1E1E1E"
-                ClipToBounds="True"
-                AllowDrop="True"
-                MouseWheel="Viewport_MouseWheel"
-                MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
-                MouseMove="Viewport_MouseMove"
-                MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
-                LostMouseCapture="Viewport_LostMouseCapture"
-                SizeChanged="Viewport_SizeChanged"
-                DragOver="Viewport_DragOver"
-                Drop="Viewport_Drop">
-            <Image x:Name="ImageView"
-                   Canvas.Left="0" Canvas.Top="0"
-                   Stretch="Fill"
-                   IsHitTestVisible="False"
-                   RenderOptions.BitmapScalingMode="HighQuality" />
-        </Canvas>
+    <Window.Resources>
+        <!-- アイコンは Windows 標準のアイコンフォントを使う（Win11: Segoe Fluent Icons / Win10: Segoe MDL2 Assets） -->
+        <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
-        <TextBlock x:Name="MessageText"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Margin="24"
-                   Foreground="#FFB0B0B0"
-                   FontSize="16"
-                   TextAlignment="Center"
-                   TextWrapping="Wrap"
-                   IsHitTestVisible="False"
-                   Text="画像をドラッグ＆ドロップするか、Ctrl+O で開きます" />
-    </Grid>
+        <Style x:Key="ToolBarIcon" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Margin" Value="4,2" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+        </Style>
+
+        <!-- ボタンにフォーカスが移ると Space / Enter がボタン側に取られるので、フォーカスを持たせない -->
+        <Style x:Key="ToolBarButton" TargetType="Button"
+               BasedOn="{StaticResource {x:Static ToolBar.ButtonStyleKey}}">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- ===== ツールバー ===== -->
+        <ToolBarTray x:Name="ToolBarHost" DockPanel.Dock="Top" IsLocked="True">
+            <ToolBar KeyboardNavigation.TabNavigation="None">
+                <Button x:Name="RotateLeftButton"
+                        Style="{StaticResource ToolBarButton}"
+                        ToolTip="左に回転 (L)"
+                        IsEnabled="False"
+                        Click="RotateLeftButton_Click">
+                    <!-- 右回転のアイコンを左右反転して使う -->
+                    <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE7AD;">
+                        <TextBlock.RenderTransform>
+                            <ScaleTransform ScaleX="-1" />
+                        </TextBlock.RenderTransform>
+                    </TextBlock>
+                </Button>
+
+                <Button x:Name="RotateRightButton"
+                        Style="{StaticResource ToolBarButton}"
+                        ToolTip="右に回転 (R)"
+                        IsEnabled="False"
+                        Click="RotateRightButton_Click">
+                    <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE7AD;" />
+                </Button>
+
+                <Separator />
+
+                <Button x:Name="FullScreenButton"
+                        Style="{StaticResource ToolBarButton}"
+                        ToolTip="全画面表示 (Enter)"
+                        Click="FullScreenButton_Click">
+                    <TextBlock x:Name="FullScreenIcon" Style="{StaticResource ToolBarIcon}" Text="&#xE740;" />
+                </Button>
+            </ToolBar>
+        </ToolBarTray>
+
+        <!-- ===== ステータスバー ===== -->
+        <!-- StatusBar の中身は DockPanel なので、右側の項目は Dock="Right" で右から順に並べ、最後のファイル名が残りを埋める -->
+        <StatusBar x:Name="StatusBarHost" DockPanel.Dock="Bottom">
+            <StatusBarItem DockPanel.Dock="Right">
+                <TextBlock x:Name="ZoomText" MinWidth="44" TextAlignment="Right" />
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right" />
+            <StatusBarItem DockPanel.Dock="Right">
+                <TextBlock x:Name="PixelSizeText" MinWidth="80" TextAlignment="Right" />
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right" />
+            <StatusBarItem DockPanel.Dock="Right">
+                <TextBlock x:Name="IndexText" MinWidth="56" TextAlignment="Right" />
+            </StatusBarItem>
+            <Separator DockPanel.Dock="Right" />
+            <StatusBarItem>
+                <TextBlock x:Name="FileNameText" TextTrimming="CharacterEllipsis" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- ===== 画像表示領域 ===== -->
+        <Grid>
+            <!--
+                Canvas は子要素をレイアウトでクリップしないので、
+                大きな画像を RenderTransform で拡大・回転・移動しても欠けない。
+                はみ出た分は ClipToBounds で切る。
+            -->
+            <Canvas x:Name="Viewport"
+                    Background="#FF1E1E1E"
+                    ClipToBounds="True"
+                    AllowDrop="True"
+                    MouseWheel="Viewport_MouseWheel"
+                    MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
+                    MouseMove="Viewport_MouseMove"
+                    MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
+                    LostMouseCapture="Viewport_LostMouseCapture"
+                    SizeChanged="Viewport_SizeChanged"
+                    DragOver="Viewport_DragOver"
+                    Drop="Viewport_Drop">
+                <Image x:Name="ImageView"
+                       Canvas.Left="0" Canvas.Top="0"
+                       Stretch="Fill"
+                       IsHitTestVisible="False"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
+            </Canvas>
+
+            <TextBlock x:Name="MessageText"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Margin="24"
+                       Foreground="#FFB0B0B0"
+                       FontSize="16"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       IsHitTestVisible="False"
+                       Text="画像をドラッグ＆ドロップするか、Ctrl+O で開きます" />
+        </Grid>
+    </DockPanel>
 </Window>

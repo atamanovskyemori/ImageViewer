@@ -18,13 +18,19 @@
   </PropertyGroup>
 
   <!--
-    WebPフォールバック用のネイティブDLL。
-    リポジトリ直下の native/x64/ に libwebp.dll（と依存する libsharpyuv.dll など）を置くと、
-    ビルド時に出力フォルダへコピーされる。置いてなくてもビルド・実行はできる（WICのみで動く）。
+    WebP用のネイティブDLL（libwebp.dll / libwebpdemux.dll / libsharpyuv.dll）。
+    リポジトリ直下の native/x64/ に含めていて、ビルド時に出力フォルダへコピーされる。
+    外してもビルド・実行はできる（WICのみで動く）。
+    libwebp のライセンス文（COPYING）も libwebp-COPYING.txt という名前で一緒にコピーする。
   -->
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)..\..\native\x64\*.dll"
           Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\native\x64\COPYING"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\native\x64\COPYING')"
+          Link="libwebp-COPYING.txt"
           CopyToOutputDirectory="PreserveNewest"
           Visible="false" />
   </ItemGroup>

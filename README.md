@@ -18,7 +18,7 @@ exe は x64 固定（同梱する libwebp.dll に合わせている）。
 
 ```
 ImageViewer.sln
-native/x64/                   ← libwebp.dll / libwebpdemux.dll を置く場所（任意）
+native/x64/                   ← libwebp 系の DLL 3つ（リポジトリに含めている）
 src/ImageViewer/
   App.xaml(.cs)               起動処理（コマンドライン引数でファイルを開く）
   MainWindow.xaml(.cs)        表示・ズーム・パン・キー操作
@@ -56,21 +56,42 @@ tests/ImageViewer.Tests/
 
 ## WebP 対応（二段構え）
 
-1. まず WIC で読む（OS に「WebP 画像拡張機能」があればここで読める）
-2. 読めなかったら libwebp.dll で読む
+1. アニメーションWebP は libwebpdemux.dll で読む
+2. 静止画は、まず WIC で読む（OS に「WebP 画像拡張機能」があればここで読める）
+3. 読めなかったら libwebp.dll で読む
 
-libwebp.dll を `native/x64/` に置くと、ビルド時に出力フォルダへコピーされる。
-置かなくてもビルド・実行はできる（そのときは 1. だけで動く）。
+必要な DLL は `native/x64/` に入れてリポジトリに含めている。clone してそのままビルド・実行できる。
+ビルド時に出力フォルダへコピーされる（csproj が `native/x64/*.dll` を全部コピーする）。
 
-DLL の入手例（vcpkg）：
+### 同梱している DLL（3つセット）
+
+| DLL | 役割 | 依存先 |
+|---|---|---|
+| `libwebp.dll` | WebP のデコード本体 | `libsharpyuv.dll` |
+| `libwebpdemux.dll` | アニメーションWebP のコマ取り出し | `libwebp.dll` |
+| `libsharpyuv.dll` | 色変換（libwebp が内部で使う） | なし |
+
+**3つとも必要。** 入れ替えや削除をするときは、必ず3つまとめて扱う。
+1つでも欠けると、依存している DLL が連鎖して読み込めなくなる。
+たとえば `libsharpyuv.dll` が無いと `libwebp.dll` が読めず、それに依存する `libwebpdemux.dll` も読めない。
+このときエラーは出ず、DLL が無いときと同じ動き（静止画は WIC だけ、アニメーションWebP は1コマ目だけ静止画）になるので注意。
+
+どれも x64 版（exe が x64 固定なので）。実行には Visual C++ 再頒布可能パッケージ（`VCRUNTIME140.dll`）も必要だが、たいていの PC には入っている。
+
+DLL が無くてもビルド・実行はできるので、外して使うこともできる（そのときは上の 2. だけで動く）。
+
+### ライセンス
+
+libwebp は BSD ライセンス。DLL を含めて配布するときは、ライセンス文（libwebp の `COPYING`）も一緒に入れること。
+`native/x64/COPYING` に置いてあり、ビルド時に出力フォルダへ `libwebp-COPYING.txt` という名前でコピーされる。
+
+### DLL を更新・入れ替えるとき（vcpkg の例）
 
 ```
 vcpkg install libwebp:x64-windows
 ```
 
-`installed\x64-windows\bin\` にある `libwebp.dll` と、依存DLL（`libsharpyuv.dll` など）を
-まとめて `native/x64/` にコピーする。
-アニメーションWebPを再生するには、同じ場所の `libwebpdemux.dll` もコピーする（無いとアニメーションWebPは表示できない）。
+`installed\x64-windows\bin\` にある上の3つを、まとめて `native/x64/` に上書きコピーして、コミットし直す。
 
 ## アニメーション（GIF / WebP）
 

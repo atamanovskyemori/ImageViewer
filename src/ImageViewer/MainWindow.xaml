@@ -1,0 +1,47 @@
+<Window x:Class="ImageViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ImageViewer"
+        Width="1024" Height="720"
+        MinWidth="320" MinHeight="240"
+        WindowStartupLocation="CenterScreen"
+        Background="#FF1E1E1E"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Grid>
+        <!--
+            Canvas は子要素をレイアウトでクリップしないので、
+            大きな画像を RenderTransform で拡大・移動しても欠けない。
+            はみ出た分は ClipToBounds で切る。
+        -->
+        <Canvas x:Name="Viewport"
+                Background="#FF1E1E1E"
+                ClipToBounds="True"
+                AllowDrop="True"
+                MouseWheel="Viewport_MouseWheel"
+                MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
+                MouseMove="Viewport_MouseMove"
+                MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
+                LostMouseCapture="Viewport_LostMouseCapture"
+                SizeChanged="Viewport_SizeChanged"
+                DragOver="Viewport_DragOver"
+                Drop="Viewport_Drop">
+            <Image x:Name="ImageView"
+                   Canvas.Left="0" Canvas.Top="0"
+                   Stretch="Fill"
+                   IsHitTestVisible="False"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+        </Canvas>
+
+        <TextBlock x:Name="MessageText"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Margin="24"
+                   Foreground="#FFB0B0B0"
+                   FontSize="16"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap"
+                   IsHitTestVisible="False"
+                   Text="画像をドラッグ＆ドロップするか、Ctrl+O で開きます" />
+    </Grid>
+</Window>

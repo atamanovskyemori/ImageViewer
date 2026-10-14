@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>ImageViewer</RootNamespace>
+    <AssemblyName>ImageViewer</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+    <!-- ランタイム前提の軽量exe（framework-dependent）。実行には .NET 10 Desktop Runtime が必要 -->
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!--
+    WebPフォールバック用のネイティブDLL。
+    リポジトリ直下の native/x64/ に libwebp.dll（と依存する libsharpyuv.dll など）を置くと、
+    ビルド時に出力フォルダへコピーされる。置いてなくてもビルド・実行はできる（WICのみで動く）。
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\native\x64\*.dll"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

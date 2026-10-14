@@ -24,6 +24,7 @@ src/ImageViewer/
     WicImageDecoder.cs        WPF標準(WIC)のデコーダ
     WebPImageDecoder.cs       libwebp によるWebPフォールバック
     ImageLoader.cs            デコーダを順に試す（WIC → libwebp）
+    ImageCache.cs             デコード済み画像のキャッシュと前後の先読み
   Navigation/
     FolderNavigator.cs        同じフォルダ内の画像一覧と前後移動
     NaturalFileNameComparer.cs 自然順ソート（StrCmpLogicalW）
@@ -57,6 +58,15 @@ vcpkg install libwebp:x64-windows
 - タイトルバーには「ファイル名 - ImageViewer」だけ出す
 - 全画面中はツールバーとステータスバーを隠す
 
+## 先読み
+
+表示中の画像の前後を裏でデコードしておき、送りを速くする。
+
+- 進んでいる方向に2枚、逆方向に1枚（現在の画像と合わせて最大4枚をメモリに持つ）
+- 表示する画像のデコードが最優先。先読みは同時に1枚ずつ
+- 範囲外になった画像はキャッシュから捨てる
+- 同じ画像を開き直すと読み直す（ファイルの更新を反映するため）
+
 ## 操作
 
 | 操作 | 動作 |
@@ -76,6 +86,5 @@ vcpkg install libwebp:x64-windows
 ## 今後のTODO
 
 - 並び順の切り替え
-- 前後の画像の先読み
 - 設定の保存（ウィンドウ位置など）
 - サムネイル一覧 / GIFアニメ / EXIF表示 / スライドショー

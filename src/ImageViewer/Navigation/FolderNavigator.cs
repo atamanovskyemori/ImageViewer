@@ -32,6 +32,18 @@ public sealed class FolderNavigator
 
     public int Count => _files.Count;
 
+    /// <summary>
+    /// 現在位置から offset だけ離れた画像のパスを返す（範囲外なら null）。位置は動かさない。
+    /// 先読み対象を決めるのに使う。
+    /// </summary>
+    public string? PeekRelative(int offset)
+    {
+        if (_index < 0) return null;
+
+        int index = _index + offset;
+        return index >= 0 && index < _files.Count ? _files[index] : null;
+    }
+
     public static bool IsSupported(string path) => SupportedExtensions.Contains(Path.GetExtension(path));
 
     /// <summary>

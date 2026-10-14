@@ -16,11 +16,14 @@ public partial class MainWindow : Window
     private const double MaxZoom = 32.0;   // 3200%
     private const double ZoomStep = 1.25;
 
-    private const string GlyphFullScreen = "";
-    private const string GlyphBackToWindow = "";
+    private const string GlyphFullScreen = "\uE740";
+    private const string GlyphBackToWindow = "\uE73F";
 
-    private readonly ImageLoader _loader = ImageLoader.CreateDefault();
+    private readonly ImageCache _cache = new(ImageLoader.CreateDefault());
     private readonly FolderNavigator _navigator = new();
+
+    // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
+    private int _direction = 1;
 
     private BitmapSource? _bitmap;
 
@@ -73,14 +76,39 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 開き直したときは、ファイルが更新されているかもしれないので読み直す
+        _cache.Clear();
+        _direction = 1;
         _ = ShowCurrentAsync();
     }
 
-    private void Navigate(bool moved)
+    /// <param name="moved">位置が変わったか（FolderNavigator.MoveXxx の戻り値）</param>
+    /// <param name="direction">+1: 次の方向へ / -1: 前の方向へ</param>
+    private void Navigate(bool moved, int direction)
     {
         if (moved)
         {
+            _direction = direction;
             _ = ShowCurrentAsync();
+        }
+    }
+
+    /// <summary>
+    /// 表示中の画像の前後を先読みし、それ以外をキャッシュから捨てる。
+    /// 進んでいる方向を優先して2枚、逆方向を1枚（現在の画像と合わせて最大4枚をメモリに持つ）。
+    /// </summary>
+    private void UpdatePrefetch(string currentPath)
+    {
+        var offsets = _direction >= 0 ? new[] { 1, 2, -1 } : new[] { -1, -2, 1 };
+        var neighbors = offsets
+            .Select(_navigator.PeekRelative)
+            .OfType<string>()
+            .ToList();
+
+        _cache.Retain([currentPath, .. neighbors]);
+        foreach (var path in neighbors)
+        {
+            _cache.Prefetch(path);
         }
     }
 
@@ -97,9 +125,13 @@ public partial class MainWindow : Window
 
         UpdateStatus();
 
+        // 表示する画像の読み込みを先に始めてから、前後の先読みを予約する
+        var loadTask = _cache.GetAsync(path);
+        UpdatePrefetch(path);
+
         try
         {
-            var bitmap = await _loader.LoadAsync(path);
+            var bitmap = await loadTask;
             if (version != _loadVersion)
             {
                 return; // もっと新しい画像の読み込みが始まっている
@@ -107,6 +139,11 @@ public partial class MainWindow : Window
 
             HideMessage();
             SetBitmap(bitmap);
+        }
+        catch (OperationCanceledException)
+        {
+            // 連打などで不要になって、キャッシュから捨てられた
+            return;
         }
         catch (ImageLoadException ex)
         {
@@ -481,21 +518,21 @@ public partial class MainWindow : Window
             case Key.Right:
             case Key.PageDown:
             case Key.Space:
-                Navigate(_navigator.MoveNext());
+                Navigate(_navigator.MoveNext(), +1);
                 break;
 
             case Key.Left:
             case Key.PageUp:
             case Key.Back:
-                Navigate(_navigator.MovePrevious());
+                Navigate(_navigator.MovePrevious(), -1);
                 break;
 
             case Key.Home:
-                Navigate(_navigator.MoveFirst());
+                Navigate(_navigator.MoveFirst(), +1);
                 break;
 
             case Key.End:
-                Navigate(_navigator.MoveLast());
+                Navigate(_navigator.MoveLast(), -1);
                 break;
 
             case Key.F:
@@ -533,7 +570,14 @@ public partial class MainWindow : Window
         }
         else
         {
-            Navigate(e.Delta > 0 ? _navigator.MovePrevious() : _navigator.MoveNext());
+            if (e.Delta > 0)
+            {
+                Navigate(_navigator.MovePrevious(), -1);
+            }
+            else
+            {
+                Navigate(_navigator.MoveNext(), +1);
+            }
         }
 
         e.Handled = true;

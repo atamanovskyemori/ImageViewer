@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ImageViewer.Animation;
 using ImageViewer.Imaging;
 using ImageViewer.Interop;
 using ImageViewer.Navigation;
@@ -26,15 +27,21 @@ public partial class MainWindow : Window
     private const string GlyphSortAscending = "\uE70E";   // ChevronUp
     private const string GlyphSortDescending = "\uE70D";  // ChevronDown
 
-    private readonly ImageCache _cache = new(ImageLoader.CreateDefault());
-    private readonly FolderNavigator _navigator = new();
+    private const long BytesPerMB = 1024L * 1024;
 
     // 起動時に ImageViewer.ini から読み、終了時に書き戻す
     private readonly AppSettings _settings = AppSettings.Load(AppSettings.DefaultPath);
 
+    // メモリ上限は設定から決まるので、コンストラクタで作る
+    private readonly ImageCache _cache;
+    private readonly FolderNavigator _navigator = new();
+    private readonly AnimationPlayer _player = new();
+
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
 
+    // 表示中の画像。アニメーションなら _bitmap は1コマ目（縦横ピクセル数・表示サイズの基準）
+    private DecodedImage? _image;
     private BitmapSource? _bitmap;
 
     // _bitmap がどのファイルの画像か。読み込み中は Navigator の現在位置とずれる
@@ -63,6 +70,12 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        _cache = new ImageCache(
+            ImageLoader.CreateDefault(_settings.AnimationMaxMemoryMB * BytesPerMB),
+            _settings.PrefetchMaxMemoryMB * BytesPerMB);
+
+        _player.Changed += AnimationPlayer_Changed;
 
         // 前回の並び順を復元（まだ何も開いていないので、次に開いたフォルダから効く）
         _navigator.SetSort(_settings.SortKey, _settings.SortDescending);
@@ -123,6 +136,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// 表示中の画像の前後を先読みし、それ以外をキャッシュから捨てる。
     /// 進んでいる方向を優先して2枚、逆方向を1枚（現在の画像と合わせて最大4枚をメモリに持つ）。
+    /// 先読みの合計が上限（ini の PrefetchMaxMB）を超える分は、優先度の低いものから諦める。
     /// </summary>
     private void UpdatePrefetch(string currentPath)
     {
@@ -132,7 +146,7 @@ public partial class MainWindow : Window
             .OfType<string>()
             .ToList();
 
-        _cache.Retain([currentPath, .. neighbors]);
+        _cache.Retain(currentPath, neighbors);
         foreach (var path in neighbors)
         {
             _cache.Prefetch(path);
@@ -145,7 +159,7 @@ public partial class MainWindow : Window
         var path = _navigator.Current;
         if (path is null)
         {
-            SetBitmap(null, null);
+            SetImage(null, null);
             UpdateStatus();
             return;
         }
@@ -158,14 +172,14 @@ public partial class MainWindow : Window
 
         try
         {
-            var bitmap = await loadTask;
+            var image = await loadTask;
             if (version != _loadVersion)
             {
                 return; // もっと新しい画像の読み込みが始まっている
             }
 
             HideMessage();
-            SetBitmap(bitmap, path);
+            SetImage(image, path);
         }
         catch (OperationCanceledException)
         {
@@ -181,7 +195,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SetBitmap(null, null);
+            SetImage(null, null);
             ShowMessage(ex switch
             {
                 ImageLoadException => ex.Message,
@@ -222,12 +236,19 @@ public partial class MainWindow : Window
     // 表示（ズーム・パン・回転）
     // ------------------------------------------------------------
 
-    private void SetBitmap(BitmapSource? bitmap, string? path)
+    /// <summary>表示する画像を切り替える。アニメーションなら最初から自動再生する。</summary>
+    private void SetImage(DecodedImage? image, string? path)
     {
+        var bitmap = image?.Image;
+
+        _image = image;
         _bitmap = bitmap;
         _bitmapPath = bitmap is null ? null : path;
         ImageView.Source = bitmap;
         _rotation = 0; // 回転は画像ごとにリセット
+
+        // アニメーションのコマはどれもキャンバス全体の大きさなので、ズーム・回転はそのまま効く
+        _player.Load(image);
 
         RotateLeftButton.IsEnabled = bitmap is not null;
         RotateRightButton.IsEnabled = bitmap is not null;
@@ -505,6 +526,11 @@ public partial class MainWindow : Window
         _settings.SortKey = _navigator.SortKey;
         _settings.SortDescending = _navigator.SortDescending;
 
+        // メモリ上限は手で編集する項目なので、起動中に ini を直されていたらそちらを残す（上書きで消さない）
+        var onDisk = AppSettings.Load(AppSettings.DefaultPath);
+        _settings.AnimationMaxMemoryMB = onDisk.AnimationMaxMemoryMB;
+        _settings.PrefetchMaxMemoryMB = onDisk.PrefetchMaxMemoryMB;
+
         var hwnd = new WindowInteropHelper(this).Handle;
         var placement = User32.WINDOWPLACEMENT.Create();
         if (hwnd != IntPtr.Zero && User32.GetWindowPlacement(hwnd, ref placement))
@@ -586,6 +612,34 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------
+    // アニメーション
+    // ------------------------------------------------------------
+
+    /// <summary>コマが進んだ・一時停止した、など。表示中のコマとステータスバーを合わせる</summary>
+    private void AnimationPlayer_Changed(object? sender, EventArgs e)
+    {
+        if (_player.CurrentFrame is { } frame)
+        {
+            // SetImage を通すと回転・ズームがリセットされるので、Source だけ差し替える
+            ImageView.Source = frame;
+        }
+        UpdateStatus();
+    }
+
+    /// <summary>最小化している間は再生を止めておく（戻したら続きから）</summary>
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        _player.Suspended = WindowState == WindowState.Minimized;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _player.Load(null); // タイマーを止める
+        base.OnClosed(e);
+    }
+
+    // ------------------------------------------------------------
     // ステータスバー・タイトル・メッセージ
     // ------------------------------------------------------------
 
@@ -600,6 +654,7 @@ public partial class MainWindow : Window
             IndexText.Text = string.Empty;
             PixelSizeText.Text = string.Empty;
             ZoomText.Text = string.Empty;
+            SetFrameText(null);
             return;
         }
 
@@ -617,18 +672,45 @@ public partial class MainWindow : Window
             // 何も出ていない（読み込み失敗など）
             PixelSizeText.Text = string.Empty;
             ZoomText.Text = string.Empty;
+            SetFrameText(null);
         }
         else if (!string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
         {
             // 前の画像を出したまま、次の画像を読み込み中。前の画像の縦横を新しいファイル名と並べない
             PixelSizeText.Text = "読み込み中…";
             ZoomText.Text = string.Empty;
+            SetFrameText(null);
         }
         else
         {
             PixelSizeText.Text = $"{_bitmap.PixelWidth} × {_bitmap.PixelHeight}";
             ZoomText.Text = $"{Math.Round(_zoom * 100)}%";
+            SetFrameText(BuildFrameText());
         }
+    }
+
+    /// <summary>ステータスバーのコマ表示（「コマ 3 / 20」など）。アニメーションでも補足もなければ null</summary>
+    private string? BuildFrameText()
+    {
+        if (_player.IsAnimated)
+        {
+            var state = _player.IsFinished ? "（再生終了）"
+                : _player.IsPaused ? "（一時停止）"
+                : string.Empty;
+            return $"コマ {_player.FrameIndex + 1} / {_player.FrameCount}{state}";
+        }
+
+        // 大きすぎて1コマ目だけにした、など
+        return _image?.Notice;
+    }
+
+    /// <summary>コマ表示の欄を出す / 隠す（静止画では欄ごと隠す）</summary>
+    private void SetFrameText(string? text)
+    {
+        var visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
+        FrameText.Text = text ?? string.Empty;
+        FrameItem.Visibility = visibility;
+        FrameSeparator.Visibility = visibility;
     }
 
     private void ShowMessage(string message)
@@ -697,6 +779,19 @@ public partial class MainWindow : Window
 
             case Key.L:
                 Rotate(-90);
+                break;
+
+            // アニメーション：P で一時停止 ⇔ 再生、, . でコマ送り（コマ送りすると一時停止になる）
+            case Key.P when _player.IsAnimated:
+                _player.TogglePause();
+                break;
+
+            case Key.OemComma when _player.IsAnimated:
+                _player.Step(-1);
+                break;
+
+            case Key.OemPeriod when _player.IsAnimated:
+                _player.Step(+1);
                 break;
 
             case Key.Right:

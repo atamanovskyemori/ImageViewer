@@ -112,6 +112,50 @@ namespace ImageViewer.Tests.Settings
         }
 
         [TestMethod]
+        public void Memory_Limits_Default_And_Are_Always_Written()
+        {
+            var settings = new AppSettings();
+
+            Assert.AreEqual(256, settings.AnimationMaxMemoryMB);
+            Assert.AreEqual(512, settings.PrefetchMaxMemoryMB);
+
+            // Written even when they are defaults, so that they can be edited by hand
+            var ini = settings.ToIni();
+            Assert.AreEqual("256", ini.Get("Memory", "AnimationMaxMB"));
+            Assert.AreEqual("512", ini.Get("Memory", "PrefetchMaxMB"));
+        }
+
+        [TestMethod]
+        public void Memory_Limits_Are_Read_From_Ini()
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse("[Memory]\nAnimationMaxMB=1024\nPrefetchMaxMB=64\n"));
+
+            Assert.AreEqual(1024, settings.AnimationMaxMemoryMB);
+            Assert.AreEqual(64, settings.PrefetchMaxMemoryMB);
+        }
+
+        [TestMethod]
+        public void Out_Of_Range_Memory_Limits_Fall_Back_To_Defaults()
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse("[Memory]\nAnimationMaxMB=0\nPrefetchMaxMB=999999\n"));
+
+            Assert.AreEqual(AppSettings.DefaultAnimationMaxMemoryMB, settings.AnimationMaxMemoryMB);
+            Assert.AreEqual(AppSettings.DefaultPrefetchMaxMemoryMB, settings.PrefetchMaxMemoryMB);
+        }
+
+        [TestMethod]
+        public void Memory_Limits_RoundTrip_Through_File()
+        {
+            var path = Path.Combine(_dir, AppSettings.FileName);
+            new AppSettings { AnimationMaxMemoryMB = 128, PrefetchMaxMemoryMB = 2048 }.TrySave(path);
+
+            var loaded = AppSettings.Load(path);
+
+            Assert.AreEqual(128, loaded.AnimationMaxMemoryMB);
+            Assert.AreEqual(2048, loaded.PrefetchMaxMemoryMB);
+        }
+
+        [TestMethod]
         public void Missing_Maximized_Means_Not_Maximized()
         {
             var ini = IniFile.Parse("[Window]\nLeft=0\nTop=0\nWidth=800\nHeight=600\n");

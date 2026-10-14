@@ -9,12 +9,21 @@ namespace ImageViewer.Imaging;
 /// JPEG/PNG/GIF/BMP/TIFF/ICO/JPEG XR は標準で読める。
 /// WebP/HEIC などは、OSにコーデック（拡張機能）が入っていれば読める。
 /// JPEG/TIFF は EXIF の向き（Orientation）を見て、正しい向きに直してから返す（表示用。ファイルは変えない）。
+/// 2コマ以上ある GIF はアニメーションとして合成する（<see cref="GifAnimation"/>）。
 /// </summary>
 public sealed class WicImageDecoder : IImageDecoder
 {
     // EXIF の Orientation タグ（274）。System.Photo.Orientation で取れなかったときの予備
     private const string JpegOrientationQuery = "/app1/ifd/{ushort=274}";
     private const string TiffOrientationQuery = "/ifd/{ushort=274}";
+
+    private readonly long _maxAnimationBytes;
+
+    /// <param name="maxAnimationBytes">1枚のアニメーションに使っていいメモリ。超えたら1コマ目だけ表示する</param>
+    public WicImageDecoder(long maxAnimationBytes = AnimationLimits.DefaultMaxBytes)
+    {
+        _maxAnimationBytes = maxAnimationBytes;
+    }
 
     public string Name => "WIC";
 
@@ -23,7 +32,7 @@ public sealed class WicImageDecoder : IImageDecoder
     // WICは中身を見て自分で判断するので、とりあえず何でも試す
     public bool CanDecode(ReadOnlySpan<byte> header) => true;
 
-    public BitmapSource Decode(byte[] data)
+    public DecodedImage Decode(byte[] data)
     {
         using var stream = new MemoryStream(data, writable: false);
 
@@ -32,6 +41,12 @@ public sealed class WicImageDecoder : IImageDecoder
             stream,
             BitmapCreateOptions.PreservePixelFormat,
             BitmapCacheOption.OnLoad);
+
+        // アニメーションGIF（メタデータもここで読むので、stream を閉じる前に処理する）
+        if (decoder is GifBitmapDecoder && decoder.Frames.Count > 1)
+        {
+            return GifAnimation.Decode(decoder, _maxAnimationBytes);
+        }
 
         BitmapFrame frame = decoder.Frames[0];
         BitmapSource result = frame;
@@ -53,7 +68,7 @@ public sealed class WicImageDecoder : IImageDecoder
         {
             result.Freeze();
         }
-        return result;
+        return new DecodedImage(result);
     }
 
     /// <summary>EXIF の Orientation（1〜8）を読む。無い・読めないときは 1（そのまま）</summary>

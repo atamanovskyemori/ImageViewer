@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ImageViewer.Imaging;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace ImageViewer.Tests.Imaging
@@ -124,8 +125,8 @@ namespace ImageViewer.Tests.Imaging
             await Task.Delay(50);
             Assert.AreEqual(0, _loader.GetCount("B"), "Prefetch B should be queued and not started yet");
 
-            // Retain only A -> B's queued prefetch should be canceled
-            cache.Retain(new[] { "A" });
+            // Retain only A (as the current image) -> B's queued prefetch should be canceled
+            cache.Retain("A", Array.Empty<string>());
 
             // Release A
             evtA.Set();
@@ -179,6 +180,76 @@ namespace ImageViewer.Tests.Imaging
             Assert.AreEqual(1, _loader.GetCount("C"));
         }
 
+        [TestMethod]
+        public async Task Prefetch_Stops_When_Budget_Is_Used()
+        {
+            // Each image is 100x100 BGRA = 40,000 bytes. B alone fills the budget.
+            // (An image whose size is still unknown is allowed while the budget is not yet full.)
+            var cache = new ImageCache(_loader, prefetchBudgetBytes: 40_000);
+            _loader.Register("B", CreateImage(100, 100)).Set();
+            _loader.Register("C", CreateImage(100, 100)).Set();
+
+            cache.Retain("A", new[] { "B", "C" });
+            cache.Prefetch("B");
+            await WaitUntil(() => _loader.GetCount("B") == 1);
+            await Task.Delay(50); // let B complete
+
+            cache.Prefetch("C");
+            await Task.Delay(100);
+
+            Assert.AreEqual(0, _loader.GetCount("C"), "C should not be prefetched once the budget is used by B");
+        }
+
+        [TestMethod]
+        public async Task Retain_Trims_Lower_Priority_When_Over_Budget()
+        {
+            var cache = new ImageCache(_loader, prefetchBudgetBytes: 50_000);
+            _loader.Register("B", CreateImage(100, 100)).Set();
+            _loader.Register("C", CreateImage(100, 100)).Set();
+
+            // Prefetch both while the budget is not yet known to be exceeded (sizes are unknown before decoding)
+            cache.Retain("A", new[] { "B", "C" });
+            cache.Prefetch("B");
+            cache.Prefetch("C");
+            await WaitUntil(() => _loader.GetCount("B") == 1 && _loader.GetCount("C") == 1);
+            await Task.Delay(50);
+
+            // Now both are decoded (80,000 bytes) -> C (lower priority) is dropped, and not prefetched again
+            cache.Retain("A", new[] { "B", "C" });
+            cache.Prefetch("B");
+            cache.Prefetch("C");
+            await Task.Delay(100);
+
+            Assert.AreEqual(1, _loader.GetCount("B"), "B should be kept");
+            Assert.AreEqual(1, _loader.GetCount("C"), "C should be dropped and not decoded again");
+
+            // B is still cached: showing it does not decode again
+            await cache.GetAsync("B").WaitAsync(TimeSpan.FromMilliseconds(DefaultTimeoutMs));
+            Assert.AreEqual(1, _loader.GetCount("B"));
+        }
+
+        [TestMethod]
+        public async Task Current_Image_Does_Not_Count_Toward_Budget()
+        {
+            var cache = new ImageCache(_loader, prefetchBudgetBytes: 50_000);
+            _loader.Register("A", CreateImage(100, 100)).Set();
+            _loader.Register("B", CreateImage(100, 100)).Set();
+
+            await cache.GetAsync("A").WaitAsync(TimeSpan.FromMilliseconds(DefaultTimeoutMs));
+            cache.Retain("A", new[] { "B" });
+            cache.Prefetch("B");
+
+            await WaitUntil(() => _loader.GetCount("B") == 1);
+        }
+
+        private static DecodedImage CreateImage(int width, int height)
+        {
+            var bitmap = BitmapSource.Create(
+                width, height, 96, 96, PixelFormats.Bgra32, null, new byte[width * height * 4], width * 4);
+            bitmap.Freeze();
+            return new DecodedImage(bitmap);
+        }
+
         private static async Task WaitUntil(Func<bool> condition, int timeoutMs = DefaultTimeoutMs)
         {
             var sw = Stopwatch.StartNew();
@@ -198,16 +269,17 @@ namespace ImageViewer.Tests.Imaging
             private sealed class Entry
             {
                 public ManualResetEventSlim Event { get; } = new(false);
+                public DecodedImage? Result { get; init; }
                 public int Count;
                 public int FailNext;
             }
 
             private readonly ConcurrentDictionary<string, Entry> _map = new(StringComparer.OrdinalIgnoreCase);
 
-            /// <summary>Registers a path. Load blocks until the returned event is set.</summary>
-            public ManualResetEventSlim Register(string path)
+            /// <summary>Registers a path. Load blocks until the returned event is set, then returns result.</summary>
+            public ManualResetEventSlim Register(string path, DecodedImage? result = null)
             {
-                var entry = new Entry();
+                var entry = new Entry { Result = result };
                 _map[path] = entry;
                 return entry.Event;
             }
@@ -226,7 +298,7 @@ namespace ImageViewer.Tests.Imaging
                 }
             }
 
-            public BitmapSource Load(string path)
+            public DecodedImage Load(string path)
             {
                 if (!_map.TryGetValue(path, out var e))
                 {
@@ -244,7 +316,7 @@ namespace ImageViewer.Tests.Imaging
                     throw new ImageLoadException("fake failure");
                 }
 
-                return null!;
+                return e.Result!;
             }
         }
     }

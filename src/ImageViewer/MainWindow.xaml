@@ -128,6 +128,11 @@
                 <TextBlock x:Name="PixelSizeText" MinWidth="80" TextAlignment="Right" />
             </StatusBarItem>
             <Separator DockPanel.Dock="Right" />
+            <!-- アニメーションのコマ表示（静止画では欄ごと隠す） -->
+            <StatusBarItem x:Name="FrameItem" DockPanel.Dock="Right" Visibility="Collapsed">
+                <TextBlock x:Name="FrameText" MinWidth="72" TextAlignment="Right" />
+            </StatusBarItem>
+            <Separator x:Name="FrameSeparator" DockPanel.Dock="Right" Visibility="Collapsed" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock x:Name="IndexText" MinWidth="56" TextAlignment="Right" />
             </StatusBarItem>

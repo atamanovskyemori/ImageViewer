@@ -1,5 +1,4 @@
 ﻿using System.IO;
-using System.Windows.Media.Imaging;
 
 namespace ImageViewer.Imaging;
 
@@ -8,7 +7,7 @@ public sealed class ImageLoadException(string message, Exception? inner = null) 
 
 /// <summary>
 /// 登録されたデコーダを順番に試して、最初に成功したものを返す。
-/// 既定では WIC → libwebp の二段構え。
+/// 既定では「アニメーションWebP（libwebpdemux）→ WIC → libwebp」の順。
 /// </summary>
 public sealed class ImageLoader : IImageLoader
 {
@@ -19,13 +18,16 @@ public sealed class ImageLoader : IImageLoader
         _decoders = decoders.ToArray();
     }
 
-    public static ImageLoader CreateDefault() => new(
+    /// <param name="maxAnimationBytes">1枚のアニメーションに使っていいメモリ。超えたら1枚目だけ表示する</param>
+    public static ImageLoader CreateDefault(long maxAnimationBytes = AnimationLimits.DefaultMaxBytes) => new(
     [
-        new WicImageDecoder(),
+        // WIC の WebP コーデックはアニメーションの1コマ目しか返さないので、アニメーションWebPだけ先に取る
+        new WebPAnimationDecoder(maxAnimationBytes),
+        new WicImageDecoder(maxAnimationBytes),
         new WebPImageDecoder(),
     ]);
 
-    public BitmapSource Load(string path)
+    public DecodedImage Load(string path)
     {
         byte[] data;
         try

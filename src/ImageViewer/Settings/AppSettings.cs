@@ -24,6 +24,28 @@ public sealed class AppSettings
 
     private const string WindowSection = "Window";
     private const string SortSection = "Sort";
+    private const string MemorySection = "Memory";
+
+    /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
+    public const int DefaultAnimationMaxMemoryMB = 256;
+
+    /// <summary>先読みに使うメモリ上限の既定値（MB）</summary>
+    public const int DefaultPrefetchMaxMemoryMB = 512;
+
+    // メモリ上限として受け付ける範囲（MB）。範囲外は既定値に戻す
+    private const int MinMemoryMB = 1;
+    private const int MaxMemoryMB = 65536;
+
+    /// <summary>
+    /// アニメーション1枚に使っていいメモリ（MB）。超えたら1コマ目だけ表示する。
+    /// アプリには変更する画面がないので、ini を手で編集して変える。
+    /// </summary>
+    public int AnimationMaxMemoryMB { get; set; } = DefaultAnimationMaxMemoryMB;
+
+    /// <summary>
+    /// 先読みした画像の合計メモリ（MB）。表示中の画像は含まない。ini を手で編集して変える。
+    /// </summary>
+    public int PrefetchMaxMemoryMB { get; set; } = DefaultPrefetchMaxMemoryMB;
 
     /// <summary>保存されたウィンドウの位置。まだ保存されていなければ null（既定の位置で開く）</summary>
     public WindowBounds? Window { get; set; }
@@ -99,6 +121,16 @@ public sealed class AppSettings
             settings.SortDescending = descending;
         }
 
+        if (TryGetMemoryMB(ini, "AnimationMaxMB", out int animationMB))
+        {
+            settings.AnimationMaxMemoryMB = animationMB;
+        }
+
+        if (TryGetMemoryMB(ini, "PrefetchMaxMB", out int prefetchMB))
+        {
+            settings.PrefetchMaxMemoryMB = prefetchMB;
+        }
+
         return settings;
     }
 
@@ -118,8 +150,15 @@ public sealed class AppSettings
         ini.Set(SortSection, "Key", SortKey.ToString());
         ini.Set(SortSection, "Descending", Format(SortDescending));
 
+        // 手で編集できるように、既定値のままでも必ず書き出す
+        ini.Set(MemorySection, "AnimationMaxMB", Format(AnimationMaxMemoryMB));
+        ini.Set(MemorySection, "PrefetchMaxMB", Format(PrefetchMaxMemoryMB));
+
         return ini;
     }
+
+    private static bool TryGetMemoryMB(IniFile ini, string key, out int value) =>
+        TryGetInt(ini, MemorySection, key, out value) && value is >= MinMemoryMB and <= MaxMemoryMB;
 
     private static string Format(int value) => value.ToString(CultureInfo.InvariantCulture);
 

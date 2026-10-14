@@ -7,7 +7,7 @@ namespace ImageViewer.Imaging;
 /// <summary>
 /// libwebp.dll を使った WebP デコーダ。
 /// OSにWebP拡張機能がなくてWICで読めなかったときのフォールバック。
-/// 現状は静止画のみ（アニメーションWebPは非対応）。
+/// 静止画用。アニメーションWebPは <see cref="WebPAnimationDecoder"/> が先に受け持つ。
 /// </summary>
 public sealed class WebPImageDecoder : IImageDecoder
 {
@@ -21,7 +21,7 @@ public sealed class WebPImageDecoder : IImageDecoder
         && header[..4].SequenceEqual("RIFF"u8)
         && header.Slice(8, 4).SequenceEqual("WEBP"u8);
 
-    public unsafe BitmapSource Decode(byte[] data)
+    public unsafe DecodedImage Decode(byte[] data)
     {
         fixed (byte* src = data)
         {
@@ -44,14 +44,15 @@ public sealed class WebPImageDecoder : IImageDecoder
             {
                 if (LibWebP.WebPDecodeBGRAInto(src, (nuint)data.Length, dst, (nuint)pixels.Length, stride) == null)
                 {
-                    throw new NotSupportedException("WebPのデコードに失敗しました（アニメーションWebPは未対応）。");
+                    // アニメーションWebPは WebPDecode 系では読めない（libwebpdemux.dll が無いとここに来る）
+                    throw new NotSupportedException("WebPのデコードに失敗しました（アニメーションWebPには libwebpdemux.dll が必要）。");
                 }
             }
 
             // libwebp の出力は非乗算済みアルファなので Bgra32（Pbgra32 ではない）
             var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
             bitmap.Freeze();
-            return bitmap;
+            return new DecodedImage(bitmap);
         }
     }
 }

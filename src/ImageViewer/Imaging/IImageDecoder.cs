@@ -1,6 +1,4 @@
-﻿using System.Windows.Media.Imaging;
-
-namespace ImageViewer.Imaging;
+﻿namespace ImageViewer.Imaging;
 
 /// <summary>
 /// 画像デコーダの共通インターフェース。
@@ -20,8 +18,8 @@ public interface IImageDecoder
 
     /// <summary>
     /// 画像をデコードする。バックグラウンドスレッドから呼ばれるので、
-    /// 戻り値は必ず Freeze 済みにすること（UIスレッドに渡すため）。
+    /// 中の BitmapSource は必ず Freeze 済みにすること（UIスレッドに渡すため）。
     /// 失敗したら例外を投げる。
     /// </summary>
-    BitmapSource Decode(byte[] data);
+    DecodedImage Decode(byte[] data);
 }

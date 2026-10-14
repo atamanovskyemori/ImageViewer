@@ -18,16 +18,24 @@ exe は x64 固定（同梱する libwebp.dll に合わせている）。
 
 ```
 ImageViewer.sln
-native/x64/                   ← libwebp.dll を置く場所（任意）
+native/x64/                   ← libwebp.dll / libwebpdemux.dll を置く場所（任意）
 src/ImageViewer/
   App.xaml(.cs)               起動処理（コマンドライン引数でファイルを開く）
   MainWindow.xaml(.cs)        表示・ズーム・パン・キー操作
+  Animation/
+    AnimationTimeline.cs      経過時間から「今どのコマか」を決める（ループ回数・コマ送り）
+    AnimationPlayer.cs        タイマーで再生する（一時停止・最小化中は停止）
   Imaging/
     IImageDecoder.cs          デコーダの共通インターフェース
-    WicImageDecoder.cs        WPF標準(WIC)のデコーダ
-    WebPImageDecoder.cs       libwebp によるWebPフォールバック
+    DecodedImage.cs           デコード結果（静止画、またはアニメーションの全コマ）
+    AnimationLimits.cs        アニメーションの決めごと（メモリ上限・表示時間の補正）
+    WicImageDecoder.cs        WPF標準(WIC)のデコーダ（2コマ以上のGIFは GifAnimation へ）
+    GifAnimation.cs           GIF のメタデータを読んでアニメーションにする
+    GifFrameComposer.cs       GIF のコマを重ねて合成する（Disposal 対応）
+    WebPAnimationDecoder.cs   libwebpdemux によるアニメーションWebP
+    WebPImageDecoder.cs       libwebp によるWebPフォールバック（静止画）
     IImageLoader.cs           読み込み処理のインターフェース（テストで差し替えるため）
-    ImageLoader.cs            デコーダを順に試す（WIC → libwebp）
+    ImageLoader.cs            デコーダを順に試す（アニメWebP → WIC → libwebp）
     ImageCache.cs             デコード済み画像のキャッシュと前後の先読み
   Navigation/
     FolderNavigator.cs        同じフォルダ内の画像一覧と前後移動
@@ -38,9 +46,11 @@ src/ImageViewer/
     AppSettings.cs            設定の中身と ImageViewer.ini への保存・読み込み
   Interop/
     LibWebP.cs                libwebp.dll の P/Invoke 定義
+    LibWebPDemux.cs           libwebpdemux.dll の P/Invoke 定義（アニメーションWebP）
     User32.cs                 ウィンドウ位置の取得・復元（Get/SetWindowPlacement）
 tests/ImageViewer.Tests/
-  Imaging/ImageCacheTests.cs  先読み・キャッシュのテスト
+  Imaging/                    先読み・キャッシュ、GIF合成、形式の判定などのテスト
+  Animation/                  再生タイミングのテスト
   Settings/                   INI・設定の読み書きのテスト
 ```
 
@@ -60,7 +70,22 @@ vcpkg install libwebp:x64-windows
 
 `installed\x64-windows\bin\` にある `libwebp.dll` と、依存DLL（`libsharpyuv.dll` など）を
 まとめて `native/x64/` にコピーする。
-※ アニメーションWebPは未対応（先頭フレームも出ない）。
+アニメーションWebPを再生するには、同じ場所の `libwebpdemux.dll` もコピーする（無いとアニメーションWebPは表示できない）。
+
+## アニメーション（GIF / WebP）
+
+開いたら自動で再生する。
+
+- GIF：WIC でコマを取り出し、メタデータ（位置・表示時間・Disposal・ループ回数）に従って自前で合成する
+  - Disposal 2（背景に戻す）はブラウザに合わせて透明にする
+  - ループ回数は Chrome / Firefox と同じ解釈（拡張なし = 1回、0 = 無限、N = N+1回）
+- WebP：libwebpdemux（WebPAnimDecoder）が合成済みのコマを返すので、それをそのまま使う
+- 表示時間が 10ms 以下のコマは 100ms として扱う（ブラウザと同じ）
+- 決められた回数を再生したら最後のコマで止まる（P で最初から再生し直す）
+- 処理が遅れたときはコマを飛ばして追いつく。最小化している間は止める
+- 全コマを合成済みでメモリに持つ。上限（ini の `AnimationMaxMB`、既定 256MB）を超えるものは1コマ目だけ表示して、ステータスバーに「アニメ省略」と出す
+- ズーム・パン・回転は再生中もそのまま効く
+- ステータスバーに「コマ 3 / 20」と出す（一時停止中・再生終了も表示）
 
 ## 設定の保存
 
@@ -77,12 +102,20 @@ Maximized=false
 [Sort]
 Key=Name
 Descending=false
+
+[Memory]
+AnimationMaxMB=256
+PrefetchMaxMB=512
 ```
 
 - `[Window]`：通常時のウィンドウ位置とサイズ（物理ピクセル）と、最大化していたか
   - 最大化・全画面で終了しても、元に戻したときの位置とサイズを保存する。全画面は次回は通常表示で開く（全画面の前に最大化していたら最大化）
   - 保存した位置が画面外（モニタを外した等）なら、OS が画面内に収める
 - `[Sort]`：並び順（`Name` / `LastWriteTime` / `Size`）と降順か
+- `[Memory]`：メモリの上限（MB、1〜65536）。アプリに設定画面は無いので、ここを手で書き換える
+  - `AnimationMaxMB`：アニメーション1枚に使うメモリ。超えたら1コマ目だけ表示
+  - `PrefetchMaxMB`：先読みした画像の合計（表示中の画像は含まない）
+  - 次の起動から効く。アプリを起動したまま書き換えても、終了時に消されない（この2つはファイル側の値を残す）
 - ファイルが無い・値が壊れているときは、その項目だけ既定値を使う。手で書くときは `true/false` の代わりに `1/0` でもいい
 - exe の場所に書き込めないと保存されない（起動・終了はふつうにできる）。開発中は `bin\Debug\net10.0-windows\` にできる
 
@@ -118,6 +151,7 @@ R / L での回転は、その上にさらに表示だけ回す。
 - 先読みが終わっている画像は、そのまま表示に使う（読み込み途中なら、その完了を待つ）
 - 順番待ちの先読みが表示対象になったら、待たずにすぐ読む
 - 範囲外になった画像はキャッシュから捨てる
+- 先読みした画像の合計がメモリ上限（ini の `PrefetchMaxMB`、既定 512MB）を超えそうなら、優先度の低いものから諦める（目安。読み込み中の画像は大きさが分からないので、少し超えることはある）
 - 同じ画像を開き直すと読み直す（ファイルの更新を反映するため）
 
 ## 操作
@@ -135,7 +169,9 @@ R / L での回転は、その上にさらに表示だけ回す。
 | R / L / ツールバー | 右回転 / 左回転（表示のみ。画像を切り替えるとリセット） |
 | Enter / ツールバー | 全画面表示の切り替え |
 | Esc | 全画面表示の終了 |
+| P | アニメーションの一時停止 ⇔ 再生（再生し終わっていたら最初から） |
+| , / . | アニメーションのコマ送り（前 / 次。押すと一時停止になる） |
 
 ## 今後のTODO
 
-- サムネイル一覧 / GIFアニメ / EXIF情報の表示 / スライドショー
+- サムネイル一覧 / EXIF情報の表示 / スライドショー

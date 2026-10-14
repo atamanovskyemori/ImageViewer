@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -18,6 +19,8 @@ public partial class MainWindow : Window
 
     private const string GlyphFullScreen = "\uE740";
     private const string GlyphBackToWindow = "\uE73F";
+    private const string GlyphSortAscending = "\uE70E";   // ChevronUp
+    private const string GlyphSortDescending = "\uE70D";  // ChevronDown
 
     private readonly ImageCache _cache = new(ImageLoader.CreateDefault());
     private readonly FolderNavigator _navigator = new();
@@ -26,6 +29,9 @@ public partial class MainWindow : Window
     private int _direction = 1;
 
     private BitmapSource? _bitmap;
+
+    // _bitmap がどのファイルの画像か。読み込み中は Navigator の現在位置とずれる
+    private string? _bitmapPath;
 
     // 表示状態。_zoom は「画像1ピクセル = 画面1ピクセル」を 1.0 とした倍率
     private bool _fitMode = true;
@@ -37,6 +43,9 @@ public partial class MainWindow : Window
     private bool _isFullScreen;
     private WindowState _restoreWindowState;
 
+    // 並び順ボタンの表示をコードから合わせている最中は、Checked イベントを無視する
+    private bool _updatingSortButtons;
+
     // 連打で古い読み込み結果が後から表示されないようにするための通し番号
     private int _loadVersion;
 
@@ -47,6 +56,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        UpdateSortButtons();
         UpdateStatus();
     }
 
@@ -118,12 +128,12 @@ public partial class MainWindow : Window
         var path = _navigator.Current;
         if (path is null)
         {
-            SetBitmap(null);
+            SetBitmap(null, null);
             UpdateStatus();
             return;
         }
 
-        UpdateStatus();
+        UpdateStatus(); // ここではまだ前の画像が出ているので、縦横・倍率は「読み込み中」になる
 
         // 表示する画像の読み込みを先に始めてから、前後の先読みを予約する
         var loadTask = _cache.GetAsync(path);
@@ -138,22 +148,34 @@ public partial class MainWindow : Window
             }
 
             HideMessage();
-            SetBitmap(bitmap);
+            SetBitmap(bitmap, path);
         }
         catch (OperationCanceledException)
         {
             // 連打などで不要になって、キャッシュから捨てられた
             return;
         }
-        catch (ImageLoadException ex)
+        catch (Exception ex)
         {
+            // このメソッドは投げっぱなし（_ = ShowCurrentAsync()）で呼ぶので、
+            // ここで拾わないと例外が誰にも見られずに消える。何が起きても画面には出す
             if (version != _loadVersion)
             {
                 return;
             }
 
-            SetBitmap(null);
-            ShowMessage(ex.Message);
+            SetBitmap(null, null);
+            ShowMessage(ex switch
+            {
+                ImageLoadException => ex.Message,
+                OutOfMemoryException => $"メモリが足りなくて表示できませんでした。\n{Path.GetFileName(path)}",
+                _ => $"表示中にエラーが発生しました。\n{Path.GetFileName(path)}\n{ex.Message}",
+            });
+
+            if (ex is not ImageLoadException)
+            {
+                Debug.WriteLine(ex);
+            }
         }
 
         UpdateStatus();
@@ -183,9 +205,10 @@ public partial class MainWindow : Window
     // 表示（ズーム・パン・回転）
     // ------------------------------------------------------------
 
-    private void SetBitmap(BitmapSource? bitmap)
+    private void SetBitmap(BitmapSource? bitmap, string? path)
     {
         _bitmap = bitmap;
+        _bitmapPath = bitmap is null ? null : path;
         ImageView.Source = bitmap;
         _rotation = 0; // 回転は画像ごとにリセット
 
@@ -367,6 +390,50 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------
+    // 並び順
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 並び順を変える。表示中の画像は読み直さず（ズームや回転もそのまま）、
+    /// 一覧の順番と「何枚目か」、先読み対象だけを更新する。
+    /// </summary>
+    private void ApplySort(FileSortKey key, bool descending)
+    {
+        _navigator.SetSort(key, descending);
+        UpdateSortButtons();
+        UpdateStatus();
+
+        if (_navigator.Current is string current)
+        {
+            UpdatePrefetch(current);
+        }
+    }
+
+    /// <summary>ツールバーの並び順ボタンを、現在の設定に合わせる</summary>
+    private void UpdateSortButtons()
+    {
+        _updatingSortButtons = true;
+        try
+        {
+            var key = _navigator.SortKey;
+            SortByNameButton.IsChecked = key == FileSortKey.Name;
+            SortByDateButton.IsChecked = key == FileSortKey.LastWriteTime;
+            SortBySizeButton.IsChecked = key == FileSortKey.Size;
+
+            bool descending = _navigator.SortDescending;
+            SortDirectionIcon.Text = descending ? GlyphSortDescending : GlyphSortAscending;
+            SortDirectionText.Text = descending ? "降順" : "昇順";
+            SortDirectionButton.ToolTip = descending
+                ? "降順で並べています（クリックで昇順に）"
+                : "昇順で並べています（クリックで降順に）";
+        }
+        finally
+        {
+            _updatingSortButtons = false;
+        }
+    }
+
+    // ------------------------------------------------------------
     // 全画面表示
     // ------------------------------------------------------------
 
@@ -448,15 +515,22 @@ public partial class MainWindow : Window
         FileNameText.ToolTip = path;
         IndexText.Text = $"{_navigator.Index + 1} / {_navigator.Count}";
 
-        if (_bitmap is not null)
+        if (_bitmap is null)
         {
-            PixelSizeText.Text = $"{_bitmap.PixelWidth} × {_bitmap.PixelHeight}";
-            ZoomText.Text = $"{Math.Round(_zoom * 100)}%";
+            // 何も出ていない（読み込み失敗など）
+            PixelSizeText.Text = string.Empty;
+            ZoomText.Text = string.Empty;
+        }
+        else if (!string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            // 前の画像を出したまま、次の画像を読み込み中。前の画像の縦横を新しいファイル名と並べない
+            PixelSizeText.Text = "読み込み中…";
+            ZoomText.Text = string.Empty;
         }
         else
         {
-            PixelSizeText.Text = string.Empty;
-            ZoomText.Text = string.Empty;
+            PixelSizeText.Text = $"{_bitmap.PixelWidth} × {_bitmap.PixelHeight}";
+            ZoomText.Text = $"{Math.Round(_zoom * 100)}%";
         }
     }
 
@@ -480,6 +554,19 @@ public partial class MainWindow : Window
     private void RotateRightButton_Click(object sender, RoutedEventArgs e) => Rotate(90);
 
     private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    private void SortKeyButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_updatingSortButtons) return;
+
+        if (sender is FrameworkElement { Tag: FileSortKey key })
+        {
+            ApplySort(key, _navigator.SortDescending);
+        }
+    }
+
+    private void SortDirectionButton_Click(object sender, RoutedEventArgs e) =>
+        ApplySort(_navigator.SortKey, !_navigator.SortDescending);
 
     // ------------------------------------------------------------
     // 入力イベント

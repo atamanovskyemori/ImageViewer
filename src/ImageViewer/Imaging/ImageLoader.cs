@@ -10,7 +10,7 @@ public sealed class ImageLoadException(string message, Exception? inner = null) 
 /// 登録されたデコーダを順番に試して、最初に成功したものを返す。
 /// 既定では WIC → libwebp の二段構え。
 /// </summary>
-public sealed class ImageLoader
+public sealed class ImageLoader : IImageLoader
 {
     private readonly IReadOnlyList<IImageDecoder> _decoders;
 
@@ -24,9 +24,6 @@ public sealed class ImageLoader
         new WicImageDecoder(),
         new WebPImageDecoder(),
     ]);
-
-    public Task<BitmapSource> LoadAsync(string path, CancellationToken cancellationToken = default) =>
-        Task.Run(() => Load(path), cancellationToken);
 
     public BitmapSource Load(string path)
     {

@@ -32,6 +32,34 @@ public sealed class FolderNavigator
 
     public int Count => _files.Count;
 
+    /// <summary>現在の並び順の種類</summary>
+    public FileSortKey SortKey { get; private set; } = FileSortKey.Name;
+
+    /// <summary>降順なら true</summary>
+    public bool SortDescending { get; private set; }
+
+    /// <summary>
+    /// 並び順を変える。表示中の画像はそのままで、一覧の順番と現在位置だけが変わる。
+    /// まだ何も開いていなくても設定でき、次に開いたフォルダから適用される。
+    /// </summary>
+    public void SetSort(FileSortKey key, bool descending)
+    {
+        if (key == SortKey && descending == SortDescending)
+        {
+            return;
+        }
+
+        SortKey = key;
+        SortDescending = descending;
+
+        var current = Current;
+        Sort(_files);
+        if (current is not null)
+        {
+            _index = _files.FindIndex(f => string.Equals(f, current, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     /// <summary>
     /// 現在位置から offset だけ離れた画像のパスを返す（範囲外なら null）。位置は動かさない。
     /// 先読み対象を決めるのに使う。
@@ -68,8 +96,9 @@ public sealed class FolderNavigator
         if (!files.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
         {
             files.Add(fullPath);
-            files.Sort(NaturalFileNameComparer.Instance);
         }
+
+        Sort(files);
 
         _files = files;
         _index = files.FindIndex(f => string.Equals(f, fullPath, StringComparison.OrdinalIgnoreCase));
@@ -84,6 +113,8 @@ public sealed class FolderNavigator
         {
             return false;
         }
+
+        Sort(files);
 
         _files = files;
         _index = 0;
@@ -110,12 +141,29 @@ public sealed class FolderNavigator
         return true;
     }
 
-    private static List<string> EnumerateImages(string directory)
+    // キャッシュして「昇順/降順切り替え」のみの場合は再ソートを避ける
+    private object _lastSortKey;
+    private bool _lastSortDescending;
+
+    private void Sort(List<string> files)
     {
-        var files = Directory.EnumerateFiles(directory)
+        // 同じソートキーで昇順/降順だけ切り替わった場合は全再ソートを避けて反転する
+        if (_lastSortKey != null && Equals(_lastSortKey, SortKey) && _lastSortDescending != SortDescending)
+        {
+            files.Reverse();
+            _lastSortDescending = SortDescending;
+            return;
+        }
+
+        files.Sort(new FileSortComparer(files, SortKey, SortDescending));
+
+        _lastSortKey = SortKey;
+        _lastSortDescending = SortDescending;
+    }
+
+    /// <summary>フォルダ内の対応画像を列挙する（並べ替えはしない）</summary>
+    private static List<string> EnumerateImages(string directory) =>
+        Directory.EnumerateFiles(directory)
             .Where(IsSupported)
             .ToList();
-        files.Sort(NaturalFileNameComparer.Instance);
-        return files;
-    }
 }

@@ -13,13 +13,13 @@ namespace ImageViewer.Imaging;
 /// </summary>
 public sealed class ImageCache
 {
-    private readonly ImageLoader _loader;
+    private readonly IImageLoader _loader;
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
 
     // 先読みは同時に1枚まで。表示中の画像のデコードとCPUを取り合わないようにする
     private readonly SemaphoreSlim _prefetchGate = new(1, 1);
 
-    public ImageCache(ImageLoader loader)
+    public ImageCache(IImageLoader loader)
     {
         _loader = loader;
     }
@@ -32,9 +32,9 @@ public sealed class ImageCache
     {
         if (_entries.TryGetValue(path, out var entry))
         {
-            if (entry.Task.IsFaulted)
+            if (entry.Task.IsFaulted || entry.Task.IsCanceled)
             {
-                // 前回失敗したもの（コピー中だった等）は読み直す
+                // 前回失敗したもの（コピー中だった等）や、止められたものは読み直す
                 Remove(path);
             }
             else if (entry.IsPrefetch && !entry.HasStarted)
@@ -44,6 +44,7 @@ public sealed class ImageCache
             }
             else
             {
+                // 読み込み済み、または読み込み中（先読みで始まっていたものも含む）
                 return entry.Task;
             }
         }
@@ -54,7 +55,7 @@ public sealed class ImageCache
     /// <summary>先読みを予約する。すでにキャッシュにあれば何もしない。</summary>
     public void Prefetch(string path)
     {
-        if (!_entries.TryGetValue(path, out _))
+        if (!_entries.ContainsKey(path))
         {
             Start(path, prefetch: true);
         }
@@ -86,6 +87,7 @@ public sealed class ImageCache
 
         if (!prefetch)
         {
+            // 表示用：ゲートを通さずにすぐ読む
             entry.Task = Task.Run(() =>
             {
                 entry.MarkStarted();
@@ -94,11 +96,21 @@ public sealed class ImageCache
         }
         else
         {
+            // 先読み：ゲートで1枚ずつ。順番待ちの間にキャンセルされたら読まずに終わる
             entry.Task = Task.Run(async () =>
             {
-                // prefetch=true の経路のみ async ラムダを使う（必要な await を含められる）
-                return _loader.Load(path);
-            });
+                await _prefetchGate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    entry.MarkStarted();
+                    return _loader.Load(path);
+                }
+                finally
+                {
+                    _prefetchGate.Release();
+                }
+            }, token);
         }
 
         _entries[path] = entry;

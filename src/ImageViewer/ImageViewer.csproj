@@ -13,6 +13,8 @@
     <Version>0.1.0</Version>
     <!-- ランタイム前提の軽量exe（framework-dependent）。実行には .NET 10 Desktop Runtime が必要 -->
     <SelfContained>false</SelfContained>
+    <!-- 同梱する libwebp.dll が x64 版なので、exe も x64 に固定する（AnyCPU だと ARM64 機などで DLL と合わなくなる） -->
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <!--

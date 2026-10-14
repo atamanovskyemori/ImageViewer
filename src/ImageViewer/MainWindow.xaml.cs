@@ -1,11 +1,15 @@
-﻿using System.Diagnostics;
+﻿using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImageViewer.Imaging;
+using ImageViewer.Interop;
 using ImageViewer.Navigation;
+using ImageViewer.Settings;
 using Microsoft.Win32;
 
 namespace ImageViewer;
@@ -24,6 +28,9 @@ public partial class MainWindow : Window
 
     private readonly ImageCache _cache = new(ImageLoader.CreateDefault());
     private readonly FolderNavigator _navigator = new();
+
+    // 起動時に ImageViewer.ini から読み、終了時に書き戻す
+    private readonly AppSettings _settings = AppSettings.Load(AppSettings.DefaultPath);
 
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
@@ -56,6 +63,16 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // 前回の並び順を復元（まだ何も開いていないので、次に開いたフォルダから効く）
+        _navigator.SetSort(_settings.SortKey, _settings.SortDescending);
+
+        // 前回の位置がある場合は、画面中央に出す既定の配置をやめる（位置は OnSourceInitialized で戻す）
+        if (_settings.Window is not null)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+        }
+
         UpdateSortButtons();
         UpdateStatus();
     }
@@ -430,6 +447,86 @@ public partial class MainWindow : Window
         finally
         {
             _updatingSortButtons = false;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 設定の保存・復元
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// ウィンドウのハンドルができた直後（まだ画面に出る前）に、前回の位置とサイズを戻す。
+    /// ここで戻せば、既定の位置に一瞬出てから動く、ということがない。
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        RestoreWindowPlacement();
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (!e.Cancel)
+        {
+            SaveSettings();
+        }
+    }
+
+    private void RestoreWindowPlacement()
+    {
+        if (_settings.Window is not { } bounds)
+        {
+            return;
+        }
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var placement = User32.WINDOWPLACEMENT.Create();
+        placement.ShowCmd = User32.SW_HIDE; // 位置だけ決める。表示は WPF の Show に任せる
+        placement.NormalPosition = new User32.RECT
+        {
+            Left = bounds.Left,
+            Top = bounds.Top,
+            Right = bounds.Left + bounds.Width,
+            Bottom = bounds.Top + bounds.Height,
+        };
+
+        // 保存した位置が画面外になっていても（モニタを外した等）、OS が画面内に収めてくれる
+        if (User32.SetWindowPlacement(hwnd, ref placement) && bounds.Maximized)
+        {
+            // Show の前に設定しておけば、上で決めた位置のモニタで最大化して出る
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    /// <summary>今のウィンドウ位置と並び順を ImageViewer.ini に書く。書けなくても終了は止めない。</summary>
+    private void SaveSettings()
+    {
+        _settings.SortKey = _navigator.SortKey;
+        _settings.SortDescending = _navigator.SortDescending;
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var placement = User32.WINDOWPLACEMENT.Create();
+        if (hwnd != IntPtr.Zero && User32.GetWindowPlacement(hwnd, ref placement))
+        {
+            // 最大化・全画面・最小化中でも、NormalPosition は「元に戻したときの位置とサイズ」
+            var r = placement.NormalPosition;
+
+            bool maximized = _isFullScreen
+                ? _restoreWindowState == WindowState.Maximized // 全画面にする前の状態
+                : WindowState switch
+                {
+                    WindowState.Maximized => true,
+                    WindowState.Minimized => (placement.Flags & User32.WPF_RESTORETOMAXIMIZED) != 0,
+                    _ => false,
+                };
+
+            _settings.Window = new WindowBounds(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, maximized);
+        }
+
+        if (!_settings.TrySave(AppSettings.DefaultPath))
+        {
+            Debug.WriteLine($"設定を保存できませんでした: {AppSettings.DefaultPath}");
         }
     }
 

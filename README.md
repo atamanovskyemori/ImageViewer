@@ -33,10 +33,15 @@ src/ImageViewer/
     FolderNavigator.cs        同じフォルダ内の画像一覧と前後移動
     NaturalFileNameComparer.cs 自然順ソート（StrCmpLogicalW）
     FileSort.cs               並び順の種類と比較（名前 / 更新日時 / サイズ）
+  Settings/
+    IniFile.cs                INI ファイルの読み書き（UTF-8）
+    AppSettings.cs            設定の中身と ImageViewer.ini への保存・読み込み
   Interop/
     LibWebP.cs                libwebp.dll の P/Invoke 定義
+    User32.cs                 ウィンドウ位置の取得・復元（Get/SetWindowPlacement）
 tests/ImageViewer.Tests/
   Imaging/ImageCacheTests.cs  先読み・キャッシュのテスト
+  Settings/                   INI・設定の読み書きのテスト
 ```
 
 ## WebP 対応（二段構え）
@@ -56,6 +61,30 @@ vcpkg install libwebp:x64-windows
 `installed\x64-windows\bin\` にある `libwebp.dll` と、依存DLL（`libsharpyuv.dll` など）を
 まとめて `native/x64/` にコピーする。
 ※ アニメーションWebPは未対応（先頭フレームも出ない）。
+
+## 設定の保存
+
+exe と同じフォルダの `ImageViewer.ini` に、終了時に保存して次の起動で読み込む（UTF-8）。
+
+```ini
+[Window]
+Left=100
+Top=80
+Width=1280
+Height=800
+Maximized=false
+
+[Sort]
+Key=Name
+Descending=false
+```
+
+- `[Window]`：通常時のウィンドウ位置とサイズ（物理ピクセル）と、最大化していたか
+  - 最大化・全画面で終了しても、元に戻したときの位置とサイズを保存する。全画面は次回は通常表示で開く（全画面の前に最大化していたら最大化）
+  - 保存した位置が画面外（モニタを外した等）なら、OS が画面内に収める
+- `[Sort]`：並び順（`Name` / `LastWriteTime` / `Size`）と降順か
+- ファイルが無い・値が壊れているときは、その項目だけ既定値を使う。手で書くときは `true/false` の代わりに `1/0` でもいい
+- exe の場所に書き込めないと保存されない（起動・終了はふつうにできる）。開発中は `bin\Debug\net10.0-windows\` にできる
 
 ## EXIF の向き
 
@@ -109,5 +138,4 @@ R / L での回転は、その上にさらに表示だけ回す。
 
 ## 今後のTODO
 
-- 設定の保存（ウィンドウ位置など）
 - サムネイル一覧 / GIFアニメ / EXIF情報の表示 / スライドショー

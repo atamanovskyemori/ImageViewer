@@ -21,7 +21,10 @@ public sealed class WebPImageDecoder : IImageDecoder
         && header[..4].SequenceEqual("RIFF"u8)
         && header.Slice(8, 4).SequenceEqual("WEBP"u8);
 
-    public unsafe DecodedImage Decode(byte[] data)
+    public DecodedImage Decode(byte[] data) => new(DecodeBitmap(data));
+
+    /// <summary>静止画の WebP を BitmapSource（Freeze 済み）にする。サムネイル作成からも使う。</summary>
+    public static unsafe BitmapSource DecodeBitmap(byte[] data)
     {
         fixed (byte* src = data)
         {
@@ -52,7 +55,7 @@ public sealed class WebPImageDecoder : IImageDecoder
             // libwebp の出力は非乗算済みアルファなので Bgra32（Pbgra32 ではない）
             var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
             bitmap.Freeze();
-            return new DecodedImage(bitmap);
+            return bitmap;
         }
     }
 }

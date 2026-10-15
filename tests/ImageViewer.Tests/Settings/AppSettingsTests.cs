@@ -156,6 +156,47 @@ namespace ImageViewer.Tests.Settings
         }
 
         [TestMethod]
+        public void Thumbnail_Settings_Default_And_Are_Always_Written()
+        {
+            var settings = new AppSettings();
+
+            Assert.AreEqual(256, settings.ThumbnailMaxMemoryMB);
+            Assert.AreEqual(160, settings.ThumbnailSize);
+
+            var ini = settings.ToIni();
+            Assert.AreEqual("256", ini.Get("Memory", "ThumbnailMaxMB"));
+            Assert.AreEqual("160", ini.Get("Thumbnail", "Size"));
+        }
+
+        [TestMethod]
+        public void Thumbnail_Settings_RoundTrip_Through_File()
+        {
+            var path = Path.Combine(_dir, AppSettings.FileName);
+            new AppSettings { ThumbnailMaxMemoryMB = 64, ThumbnailSize = 224 }.TrySave(path);
+
+            var loaded = AppSettings.Load(path);
+
+            Assert.AreEqual(64, loaded.ThumbnailMaxMemoryMB);
+            Assert.AreEqual(224, loaded.ThumbnailSize);
+        }
+
+        [TestMethod]
+        public void Hand_Written_Thumbnail_Size_Snaps_To_Nearest()
+        {
+            Assert.AreEqual(160, AppSettings.FromIni(IniFile.Parse("[Thumbnail]\nSize=150\n")).ThumbnailSize);
+            Assert.AreEqual(256, AppSettings.FromIni(IniFile.Parse("[Thumbnail]\nSize=9999\n")).ThumbnailSize);
+            Assert.AreEqual(160, AppSettings.FromIni(IniFile.Parse("[Thumbnail]\nSize=big\n")).ThumbnailSize, "Unreadable value keeps the default");
+        }
+
+        [TestMethod]
+        public void Out_Of_Range_Thumbnail_Memory_Falls_Back_To_Default()
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse("[Memory]\nThumbnailMaxMB=0\n"));
+
+            Assert.AreEqual(AppSettings.DefaultThumbnailMaxMemoryMB, settings.ThumbnailMaxMemoryMB);
+        }
+
+        [TestMethod]
         public void Missing_Maximized_Means_Not_Maximized()
         {
             var ini = IniFile.Parse("[Window]\nLeft=0\nTop=0\nWidth=800\nHeight=600\n");

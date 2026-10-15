@@ -2,6 +2,7 @@
 using System.IO;
 using System.Text;
 using ImageViewer.Navigation;
+using ImageViewer.Thumbnails;
 
 namespace ImageViewer.Settings;
 
@@ -25,12 +26,16 @@ public sealed class AppSettings
     private const string WindowSection = "Window";
     private const string SortSection = "Sort";
     private const string MemorySection = "Memory";
+    private const string ThumbnailSection = "Thumbnail";
 
     /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
     public const int DefaultAnimationMaxMemoryMB = 256;
 
     /// <summary>先読みに使うメモリ上限の既定値（MB）</summary>
     public const int DefaultPrefetchMaxMemoryMB = 512;
+
+    /// <summary>サムネイルに使うメモリ上限の既定値（MB）</summary>
+    public const int DefaultThumbnailMaxMemoryMB = 256;
 
     // メモリ上限として受け付ける範囲（MB）。範囲外は既定値に戻す
     private const int MinMemoryMB = 1;
@@ -46,6 +51,14 @@ public sealed class AppSettings
     /// 先読みした画像の合計メモリ（MB）。表示中の画像は含まない。ini を手で編集して変える。
     /// </summary>
     public int PrefetchMaxMemoryMB { get; set; } = DefaultPrefetchMaxMemoryMB;
+
+    /// <summary>
+    /// サムネイルの合計メモリ（MB）。超えたら長く使っていないものから捨てる。ini を手で編集して変える。
+    /// </summary>
+    public int ThumbnailMaxMemoryMB { get; set; } = DefaultThumbnailMaxMemoryMB;
+
+    /// <summary>サムネイル一覧の大きさ（DIP）。Ctrl+ホイールで変えたものを保存する</summary>
+    public int ThumbnailSize { get; set; } = ThumbnailLayout.DefaultSize;
 
     /// <summary>保存されたウィンドウの位置。まだ保存されていなければ null（既定の位置で開く）</summary>
     public WindowBounds? Window { get; set; }
@@ -131,6 +144,17 @@ public sealed class AppSettings
             settings.PrefetchMaxMemoryMB = prefetchMB;
         }
 
+        if (TryGetMemoryMB(ini, "ThumbnailMaxMB", out int thumbnailMB))
+        {
+            settings.ThumbnailMaxMemoryMB = thumbnailMB;
+        }
+
+        // 選べる大きさ以外の値（手で書いた 150 など）は、一番近い大きさにする
+        if (TryGetInt(ini, ThumbnailSection, "Size", out int thumbnailSize))
+        {
+            settings.ThumbnailSize = ThumbnailLayout.Normalize(thumbnailSize);
+        }
+
         return settings;
     }
 
@@ -153,6 +177,9 @@ public sealed class AppSettings
         // 手で編集できるように、既定値のままでも必ず書き出す
         ini.Set(MemorySection, "AnimationMaxMB", Format(AnimationMaxMemoryMB));
         ini.Set(MemorySection, "PrefetchMaxMB", Format(PrefetchMaxMemoryMB));
+        ini.Set(MemorySection, "ThumbnailMaxMB", Format(ThumbnailMaxMemoryMB));
+
+        ini.Set(ThumbnailSection, "Size", Format(ThumbnailLayout.Normalize(ThumbnailSize)));
 
         return ini;
     }

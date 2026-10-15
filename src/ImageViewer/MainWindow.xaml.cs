@@ -11,6 +11,7 @@ using ImageViewer.Imaging;
 using ImageViewer.Interop;
 using ImageViewer.Navigation;
 using ImageViewer.Settings;
+using ImageViewer.Thumbnails;
 using Microsoft.Win32;
 
 namespace ImageViewer;
@@ -26,6 +27,11 @@ public partial class MainWindow : Window
     private const string GlyphBackToWindow = "\uE73F";
     private const string GlyphSortAscending = "\uE70E";   // ChevronUp
     private const string GlyphSortDescending = "\uE70D";  // ChevronDown
+    private const string GlyphThumbnails = "\uE8A9";       // ViewAll
+    private const string GlyphSingleImage = "\uE91B";      // Photo
+
+    // サムネイルを作る大きさの上限（物理ピクセル）。高DPIでも 256 DIP がぼやけないように DPI 倍するが、これ以上は大きくしない
+    private const int MaxThumbnailPixelSize = 512;
 
     private const long BytesPerMB = 1024L * 1024;
 
@@ -36,6 +42,15 @@ public partial class MainWindow : Window
     private readonly ImageCache _cache;
     private readonly FolderNavigator _navigator = new();
     private readonly AnimationPlayer _player = new();
+
+    // サムネイルのキャッシュ。作る大きさが画面の DPI で決まるので、最初に一覧を出すときに作る
+    private ThumbnailCache? _thumbnailCache;
+
+    // サムネイル一覧を表示中か
+    private bool _thumbnailMode;
+
+    // 一覧に入る前に表示していた画像（Esc で戻る先）。フォルダから一覧で開いたときなどは null
+    private string? _pathBeforeThumbnails;
 
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
@@ -76,6 +91,8 @@ public partial class MainWindow : Window
             _settings.PrefetchMaxMemoryMB * BytesPerMB);
 
         _player.Changed += AnimationPlayer_Changed;
+
+        ThumbnailView.ThumbnailSize = _settings.ThumbnailSize;
 
         // 前回の並び順を復元（まだ何も開いていないので、次に開いたフォルダから効く）
         _navigator.SetSort(_settings.SortKey, _settings.SortDescending);
@@ -118,8 +135,26 @@ public partial class MainWindow : Window
 
         // 開き直したときは、ファイルが更新されているかもしれないので読み直す
         _cache.Clear();
+        _thumbnailCache?.Invalidate();
         _direction = 1;
-        _ = ShowCurrentAsync();
+
+        if (Directory.Exists(path))
+        {
+            // フォルダは一覧から始める。前のフォルダの画像は片付けておく（一覧から戻ったときに出ないように）
+            _loadVersion++;
+            SetImage(null, null);
+            HideMessage();
+            _pathBeforeThumbnails = null;
+            ShowThumbnails();
+        }
+        else
+        {
+            if (_thumbnailMode)
+            {
+                LeaveThumbnailMode();
+            }
+            _ = ShowCurrentAsync();
+        }
     }
 
     /// <param name="moved">位置が変わったか（FolderNavigator.MoveXxx の戻り値）</param>
@@ -233,6 +268,156 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------
+    // サムネイル一覧
+    // ------------------------------------------------------------
+
+    /// <summary>サムネイル一覧を出す。選択は今の画像にして、そこまでスクロールする</summary>
+    private void ShowThumbnails()
+    {
+        if (_navigator.Count == 0) return;
+
+        if (!_thumbnailMode)
+        {
+            // Esc で戻れるように、今表示している画像を覚えておく
+            _pathBeforeThumbnails = _bitmapPath;
+        }
+
+        // 読み込み途中の画像があれば、結果は捨てる（一覧の上にエラーなどを出さないため。戻ったときに読み直す）
+        _loadVersion++;
+
+        _thumbnailMode = true;
+        ThumbnailView.Cache = EnsureThumbnailCache();
+        ThumbnailView.Visibility = Visibility.Visible;
+        Viewport.Visibility = Visibility.Hidden;
+        HideMessage();
+        ThumbnailView.SetFiles(_navigator.Files, _navigator.Index);
+
+        UpdatePlayerSuspended();
+        UpdateRotateButtons();
+        UpdateStatus();
+    }
+
+    /// <summary>
+    /// 一覧を閉じて1枚表示に戻る。
+    /// </summary>
+    /// <param name="backToPrevious">true なら一覧に入る前の画像に戻る（Esc）。false なら選択中の画像を開く</param>
+    private void CloseThumbnails(bool backToPrevious)
+    {
+        if (!_thumbnailMode) return;
+
+        if (backToPrevious)
+        {
+            int index = _pathBeforeThumbnails is { } previous ? IndexOfFile(previous) : -1;
+            if (index < 0)
+            {
+                return; // 戻る画像が無い（フォルダを一覧で開いた直後など）。一覧のまま
+            }
+            _navigator.MoveToIndex(index);
+        }
+
+        LeaveThumbnailMode();
+
+        if (_bitmap is not null && string.Equals(_bitmapPath, _navigator.Current, StringComparison.OrdinalIgnoreCase))
+        {
+            // 一覧に入る前と同じ画像。読み直さず、ズームや回転もそのまま
+            UpdateStatus();
+            UpdatePrefetch(_bitmapPath!);
+        }
+        else
+        {
+            _direction = 1;
+            _ = ShowCurrentAsync();
+        }
+    }
+
+    /// <summary>一覧を隠して画像表示領域に戻す（どの画像を出すかは呼び出し側で決める）</summary>
+    private void LeaveThumbnailMode()
+    {
+        _thumbnailMode = false;
+        ThumbnailView.Visibility = Visibility.Collapsed; // 隠れると、表示用に持っていたサムネイルは手放される
+        Viewport.Visibility = Visibility.Visible;
+
+        UpdatePlayerSuspended();
+        UpdateRotateButtons();
+    }
+
+    private void ToggleThumbnails()
+    {
+        if (_thumbnailMode)
+        {
+            CloseThumbnails(backToPrevious: false);
+        }
+        else
+        {
+            ShowThumbnails();
+        }
+    }
+
+    private ThumbnailCache EnsureThumbnailCache()
+    {
+        if (_thumbnailCache is null)
+        {
+            // 一番大きい表示（256 DIP）でもぼやけないよう、画面の DPI 倍の大きさで作る
+            var dpi = VisualTreeHelper.GetDpi(this);
+            double scale = Math.Max(dpi.DpiScaleX, dpi.DpiScaleY);
+            int pixelSize = Math.Clamp(
+                (int)Math.Ceiling(ThumbnailLayout.MaxSize * scale),
+                ThumbnailLayout.MaxSize,
+                MaxThumbnailPixelSize);
+
+            _thumbnailCache = new ThumbnailCache(
+                new ThumbnailDecoder(),
+                pixelSize,
+                _settings.ThumbnailMaxMemoryMB * BytesPerMB);
+        }
+        return _thumbnailCache;
+    }
+
+    private int IndexOfFile(string path)
+    {
+        var files = _navigator.Files;
+        for (int i = 0; i < files.Count; i++)
+        {
+            if (string.Equals(files[i], path, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void ThumbnailView_SelectionChanged(object? sender, int index)
+    {
+        // 選ぶだけでは画像を読まない（開いたときに読む）。ステータスバーのファイル名・何枚目かだけ合わせる
+        _navigator.MoveToIndex(index);
+        UpdateStatus();
+    }
+
+    private void ThumbnailView_ItemActivated(object? sender, int index)
+    {
+        _navigator.MoveToIndex(index);
+        CloseThumbnails(backToPrevious: false);
+    }
+
+    private void ThumbnailView_ThumbnailSizeChanged(object? sender, EventArgs e) => UpdateStatus();
+
+    private void UpdateRotateButtons()
+    {
+        bool enabled = _bitmap is not null && !_thumbnailMode;
+        RotateLeftButton.IsEnabled = enabled;
+        RotateRightButton.IsEnabled = enabled;
+    }
+
+    private void UpdateThumbnailButton()
+    {
+        ThumbnailButton.IsEnabled = _navigator.Count > 0;
+        ThumbnailIcon.Text = _thumbnailMode ? GlyphSingleImage : GlyphThumbnails;
+        ThumbnailButton.ToolTip = _thumbnailMode
+            ? "選んだ画像を開く (T / Enter)"
+            : "サムネイル一覧 (T)";
+    }
+
+    // ------------------------------------------------------------
     // 表示（ズーム・パン・回転）
     // ------------------------------------------------------------
 
@@ -250,8 +435,7 @@ public partial class MainWindow : Window
         // アニメーションのコマはどれもキャンバス全体の大きさなので、ズーム・回転はそのまま効く
         _player.Load(image);
 
-        RotateLeftButton.IsEnabled = bitmap is not null;
-        RotateRightButton.IsEnabled = bitmap is not null;
+        UpdateRotateButtons();
 
         if (bitmap is null)
         {
@@ -439,12 +623,18 @@ public partial class MainWindow : Window
     {
         _navigator.SetSort(key, descending);
         UpdateSortButtons();
-        UpdateStatus();
 
-        if (_navigator.Current is string current)
+        if (_thumbnailMode)
+        {
+            // 一覧を並べ直す。選択中の画像はそのまま（位置だけ変わる）
+            ThumbnailView.SetFiles(_navigator.Files, _navigator.Index);
+        }
+        else if (_navigator.Current is string current)
         {
             UpdatePrefetch(current);
         }
+
+        UpdateStatus();
     }
 
     /// <summary>ツールバーの並び順ボタンを、現在の設定に合わせる</summary>
@@ -525,11 +715,13 @@ public partial class MainWindow : Window
     {
         _settings.SortKey = _navigator.SortKey;
         _settings.SortDescending = _navigator.SortDescending;
+        _settings.ThumbnailSize = ThumbnailView.ThumbnailSize;
 
         // メモリ上限は手で編集する項目なので、起動中に ini を直されていたらそちらを残す（上書きで消さない）
         var onDisk = AppSettings.Load(AppSettings.DefaultPath);
         _settings.AnimationMaxMemoryMB = onDisk.AnimationMaxMemoryMB;
         _settings.PrefetchMaxMemoryMB = onDisk.PrefetchMaxMemoryMB;
+        _settings.ThumbnailMaxMemoryMB = onDisk.ThumbnailMaxMemoryMB;
 
         var hwnd = new WindowInteropHelper(this).Handle;
         var placement = User32.WINDOWPLACEMENT.Create();
@@ -630,7 +822,13 @@ public partial class MainWindow : Window
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
-        _player.Suspended = WindowState == WindowState.Minimized;
+        UpdatePlayerSuspended();
+    }
+
+    /// <summary>最小化中・一覧を表示中は、アニメーションを止めておく（見えないので）</summary>
+    private void UpdatePlayerSuspended()
+    {
+        _player.Suspended = WindowState == WindowState.Minimized || _thumbnailMode;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -645,6 +843,8 @@ public partial class MainWindow : Window
 
     private void UpdateStatus()
     {
+        UpdateThumbnailButton();
+
         var path = _navigator.Current;
 
         if (path is null)
@@ -667,7 +867,14 @@ public partial class MainWindow : Window
         FileNameText.ToolTip = path;
         IndexText.Text = $"{_navigator.Index + 1} / {_navigator.Count}";
 
-        if (_bitmap is null)
+        if (_thumbnailMode)
+        {
+            // 一覧では画像を読んでいないので縦横は出さない。倍率の欄にサムネイルの大きさを出す
+            PixelSizeText.Text = string.Empty;
+            ZoomText.Text = $"{ThumbnailView.ThumbnailSize}px";
+            SetFrameText(null);
+        }
+        else if (_bitmap is null)
         {
             // 何も出ていない（読み込み失敗など）
             PixelSizeText.Text = string.Empty;
@@ -734,6 +941,8 @@ public partial class MainWindow : Window
 
     private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
+    private void ThumbnailButton_Click(object sender, RoutedEventArgs e) => ToggleThumbnails();
+
     private void SortKeyButton_Checked(object sender, RoutedEventArgs e)
     {
         if (_updatingSortButtons) return;
@@ -755,10 +964,23 @@ public partial class MainWindow : Window
     {
         bool ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
 
+        if (_thumbnailMode)
+        {
+            HandleThumbnailKey(e, ctrl);
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.O when ctrl:
                 ShowOpenDialog();
+                break;
+
+            case Key.T:
+                if (!e.IsRepeat)
+                {
+                    ShowThumbnails();
+                }
                 break;
 
             case Key.Enter:
@@ -835,6 +1057,44 @@ public partial class MainWindow : Window
 
             default:
                 return;
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>サムネイル一覧を表示中のキー操作</summary>
+    private void HandleThumbnailKey(KeyEventArgs e, bool ctrl)
+    {
+        switch (e.Key)
+        {
+            case Key.O when ctrl:
+                ShowOpenDialog();
+                break;
+
+            // 一覧では Enter は全画面ではなく「開く」（全画面はツールバーのボタンで）
+            case Key.Enter:
+            case Key.T:
+                if (!e.IsRepeat)
+                {
+                    CloseThumbnails(backToPrevious: false);
+                }
+                break;
+
+            case Key.Escape when _isFullScreen:
+                ExitFullScreen();
+                break;
+
+            case Key.Escape:
+                CloseThumbnails(backToPrevious: true);
+                break;
+
+            default:
+                // 矢印・PageUp/PageDown・Home/End・Space/BackSpace で選択を動かす
+                if (!ThumbnailView.HandleKey(e.Key))
+                {
+                    return;
+                }
+                break;
         }
 
         e.Handled = true;

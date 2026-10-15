@@ -53,12 +53,7 @@ public sealed class WicImageDecoder : IImageDecoder
 
         // WICのJPEG/TIFFデコーダはEXIFの向きを反映しないので自分で回す。
         // ほかの形式（HEICなど）はコーデック側で反映済みのことがあるので、二重に回さないよう対象を絞る
-        string? fallbackQuery = decoder switch
-        {
-            JpegBitmapDecoder => JpegOrientationQuery,
-            TiffBitmapDecoder => TiffOrientationQuery,
-            _ => null,
-        };
+        string? fallbackQuery = OrientationQueryFor(decoder);
         if (fallbackQuery is not null)
         {
             result = ApplyOrientation(frame, ReadOrientation(frame, fallbackQuery));
@@ -71,8 +66,19 @@ public sealed class WicImageDecoder : IImageDecoder
         return new DecodedImage(result);
     }
 
+    /// <summary>
+    /// EXIF の向きを自分で反映する形式なら、Orientation の予備クエリを返す。反映しない形式なら null。
+    /// （サムネイル作成でも同じ判断をするので internal）
+    /// </summary>
+    internal static string? OrientationQueryFor(BitmapDecoder decoder) => decoder switch
+    {
+        JpegBitmapDecoder => JpegOrientationQuery,
+        TiffBitmapDecoder => TiffOrientationQuery,
+        _ => null,
+    };
+
     /// <summary>EXIF の Orientation（1〜8）を読む。無い・読めないときは 1（そのまま）</summary>
-    private static int ReadOrientation(BitmapFrame frame, string fallbackQuery)
+    internal static int ReadOrientation(BitmapFrame frame, string fallbackQuery)
     {
         BitmapMetadata? metadata;
         try
@@ -111,7 +117,7 @@ public sealed class WicImageDecoder : IImageDecoder
     /// Orientation に従って回転・反転した画像を返す。
     /// TransformedBitmap は描画時に遅延計算されるので、CachedBitmap でここ（裏スレッド）で確定させる。
     /// </summary>
-    private static BitmapSource ApplyOrientation(BitmapSource source, int orientation)
+    internal static BitmapSource ApplyOrientation(BitmapSource source, int orientation)
     {
         Transform? transform = orientation switch
         {

@@ -32,6 +32,9 @@ public sealed class FolderNavigator
 
     public int Count => _files.Count;
 
+    /// <summary>今の並び順の画像一覧（サムネイル一覧に使う）。並び順を変えると中身の順番も変わる</summary>
+    public IReadOnlyList<string> Files => _files;
+
     /// <summary>現在の並び順の種類</summary>
     public FileSortKey SortKey { get; private set; } = FileSortKey.Name;
 
@@ -128,6 +131,9 @@ public sealed class FolderNavigator
     public bool MoveFirst() => MoveTo(0);
 
     public bool MoveLast() => MoveTo(_files.Count - 1);
+
+    /// <summary>指定した位置へ移動する（サムネイル一覧で選んだとき）。位置が変わったら true</summary>
+    public bool MoveToIndex(int index) => MoveTo(index);
 
     /// <summary>端では止まる（ループしない）。位置が変わったら true。</summary>
     private bool MoveTo(int index)

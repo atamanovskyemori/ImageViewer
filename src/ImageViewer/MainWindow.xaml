@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:nav="clr-namespace:ImageViewer.Navigation"
         xmlns:thumb="clr-namespace:ImageViewer.Thumbnails"
+        xmlns:meta="clr-namespace:ImageViewer.Metadata"
         Title="ImageViewer"
         Width="1024" Height="720"
         MinWidth="320" MinHeight="240"
@@ -24,6 +25,13 @@
         <!-- ボタンにフォーカスが移ると Space / Enter がボタン側に取られるので、フォーカスを持たせない -->
         <Style x:Key="ToolBarButton" TargetType="Button"
                BasedOn="{StaticResource {x:Static ToolBar.ButtonStyleKey}}">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+
+        <!-- 押したままの状態を見せるボタン（情報パネルの開閉） -->
+        <Style x:Key="ToolBarToggleButton" TargetType="ToggleButton"
+               BasedOn="{StaticResource {x:Static ToolBar.ToggleButtonStyleKey}}">
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Padding" Value="4" />
         </Style>
@@ -81,7 +89,6 @@
 
                 <Separator />
 
-                <!-- 並び順。Tag に FileSortKey を持たせて、クリック時にそれを読む -->
                 <!-- 一覧 ⇔ 1枚表示 -->
                 <Button x:Name="ThumbnailButton"
                         Style="{StaticResource ToolBarButton}"
@@ -91,8 +98,17 @@
                     <TextBlock x:Name="ThumbnailIcon" Style="{StaticResource ToolBarIcon}" Text="&#xE8A9;" />
                 </Button>
 
+                <!-- 画像の情報（EXIF）パネルの開閉 -->
+                <ToggleButton x:Name="InfoButton"
+                              Style="{StaticResource ToolBarToggleButton}"
+                              ToolTip="画像の情報 (I)"
+                              Click="InfoButton_Click">
+                    <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE946;" />
+                </ToggleButton>
+
                 <Separator />
 
+                <!-- 並び順。Tag に FileSortKey を持たせて、クリック時にそれを読む -->
                 <RadioButton x:Name="SortByNameButton"
                              Style="{StaticResource SortKeyButton}"
                              Content="名前"
@@ -154,8 +170,13 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- ===== 画像表示領域 ===== -->
+        <!-- ===== 画像表示領域（右に情報パネル） ===== -->
         <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
             <!--
                 Canvas は子要素をレイアウトでクリップしないので、
                 大きな画像を RenderTransform で拡大・回転・移動しても欠けない。
@@ -200,6 +221,11 @@
                        TextWrapping="Wrap"
                        IsHitTestVisible="False"
                        Text="画像をドラッグ＆ドロップするか、Ctrl+O で開きます" />
+
+            <!-- 画像の情報。開くと、その分だけ画像表示領域（一覧）が狭くなる -->
+            <meta:InfoPanel x:Name="InfoView"
+                            Grid.Column="1"
+                            Visibility="Collapsed" />
         </Grid>
     </DockPanel>
 </Window>

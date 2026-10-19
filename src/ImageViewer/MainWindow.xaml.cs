@@ -9,6 +9,7 @@ using System.Windows.Media.Imaging;
 using ImageViewer.Animation;
 using ImageViewer.Imaging;
 using ImageViewer.Interop;
+using ImageViewer.Metadata;
 using ImageViewer.Navigation;
 using ImageViewer.Settings;
 using ImageViewer.Thumbnails;
@@ -51,6 +52,15 @@ public partial class MainWindow : Window
 
     // 一覧に入る前に表示していた画像（Esc で戻る先）。フォルダから一覧で開いたときなどは null
     private string? _pathBeforeThumbnails;
+
+    // 情報パネル。起動時はいつも閉じている（開閉は保存しない）
+    private bool _infoVisible;
+
+    // 情報パネルに出している（読み込み中の）ファイル。同じファイルなら読み直さない
+    private string? _infoPath;
+
+    // 連続で選択を動かしたときに、古い読み込み結果を出さないための通し番号
+    private int _infoVersion;
 
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
@@ -136,6 +146,7 @@ public partial class MainWindow : Window
         // 開き直したときは、ファイルが更新されているかもしれないので読み直す
         _cache.Clear();
         _thumbnailCache?.Invalidate();
+        _infoPath = null; // 情報も読み直す
         _direction = 1;
 
         if (Directory.Exists(path))
@@ -416,6 +427,79 @@ public partial class MainWindow : Window
             ? "選んだ画像を開く (T / Enter)"
             : "サムネイル一覧 (T)";
     }
+
+    // ------------------------------------------------------------
+    // 情報パネル（EXIF）
+    // ------------------------------------------------------------
+
+    private void ToggleInfoPanel()
+    {
+        _infoVisible = !_infoVisible;
+        InfoView.Visibility = _infoVisible ? Visibility.Visible : Visibility.Collapsed;
+        InfoButton.IsChecked = _infoVisible;
+
+        if (_infoVisible)
+        {
+            _infoPath = null; // 閉じている間に変わっているかもしれないので読み直す
+            UpdateInfoPanel();
+        }
+        else
+        {
+            _infoVersion++; // 読み込み中の結果は捨てる
+        }
+    }
+
+    /// <summary>
+    /// 情報パネルを今の画像（一覧なら選択中の画像）に合わせる。UpdateStatus から毎回呼ばれるので、
+    /// 同じファイルなら何もしない。読むのは裏のスレッドで、画像のデコードはしない。
+    /// </summary>
+    private void UpdateInfoPanel()
+    {
+        if (!_infoVisible) return;
+
+        var path = _navigator.Current;
+        if (path is null)
+        {
+            _infoPath = null;
+            _infoVersion++;
+            InfoView.ShowMessage("画像が開かれていません");
+            return;
+        }
+
+        if (string.Equals(path, _infoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _infoPath = path;
+        _ = LoadInfoAsync(path, ++_infoVersion);
+    }
+
+    private async Task LoadInfoAsync(string path, int version)
+    {
+        ImageInfo info;
+        try
+        {
+            info = await Task.Run(() => ImageInfoLoader.Load(path));
+        }
+        catch (Exception ex)
+        {
+            // 投げっぱなしで呼んでいるので、ここで拾わないと誰にも見られずに消える
+            Debug.WriteLine(ex);
+            if (version == _infoVersion)
+            {
+                InfoView.ShowMessage($"情報を読めませんでした。\n{Path.GetFileName(path)}");
+            }
+            return;
+        }
+
+        if (version == _infoVersion && _infoVisible)
+        {
+            InfoView.ShowInfo(info);
+        }
+    }
+
+    private void InfoButton_Click(object sender, RoutedEventArgs e) => ToggleInfoPanel();
 
     // ------------------------------------------------------------
     // 表示（ズーム・パン・回転）
@@ -844,6 +928,7 @@ public partial class MainWindow : Window
     private void UpdateStatus()
     {
         UpdateThumbnailButton();
+        UpdateInfoPanel();
 
         var path = _navigator.Current;
 
@@ -983,6 +1068,13 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            case Key.I:
+                if (!e.IsRepeat)
+                {
+                    ToggleInfoPanel();
+                }
+                break;
+
             case Key.Enter:
                 // 押しっぱなしで全画面が点滅しないように、キーリピートは無視
                 if (!e.IsRepeat)
@@ -1077,6 +1169,13 @@ public partial class MainWindow : Window
                 if (!e.IsRepeat)
                 {
                     CloseThumbnails(backToPrevious: false);
+                }
+                break;
+
+            case Key.I:
+                if (!e.IsRepeat)
+                {
+                    ToggleInfoPanel();
                 }
                 break;
 

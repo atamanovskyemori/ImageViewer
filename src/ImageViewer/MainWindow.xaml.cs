@@ -1,11 +1,13 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using ImageViewer.Animation;
 using ImageViewer.Imaging;
 using ImageViewer.Interop;
@@ -30,6 +32,8 @@ public partial class MainWindow : Window
     private const string GlyphSortDescending = "\uE70D";  // ChevronDown
     private const string GlyphThumbnails = "\uE8A9";       // ViewAll
     private const string GlyphSingleImage = "\uE91B";      // Photo
+    private const string GlyphPlay = "\uE768";             // Play
+    private const string GlyphStop = "\uE71A";             // Stop
 
     // サムネイルを作る大きさの上限（物理ピクセル）。高DPIでも 256 DIP がぼやけないように DPI 倍するが、これ以上は大きくしない
     private const int MaxThumbnailPixelSize = 512;
@@ -61,6 +65,15 @@ public partial class MainWindow : Window
 
     // 連続で選択を動かしたときに、古い読み込み結果を出さないための通し番号
     private int _infoVersion;
+
+    // スライドショー中か
+    private bool _slideshow;
+
+    // 静止画を次へ送るタイマー（アニメーションは1周したところで送るので使わない）
+    private readonly DispatcherTimer _slideTimer = new();
+
+    // 表示中のアニメーションが1周するのを待っているか
+    private bool _slideWaitingForAnimation;
 
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
@@ -101,6 +114,8 @@ public partial class MainWindow : Window
             _settings.PrefetchMaxMemoryMB * BytesPerMB);
 
         _player.Changed += AnimationPlayer_Changed;
+        _player.PlayCompleted += AnimationPlayer_PlayCompleted;
+        _slideTimer.Tick += SlideTimer_Tick;
 
         ThumbnailView.ThumbnailSize = _settings.ThumbnailSize;
 
@@ -142,6 +157,9 @@ public partial class MainWindow : Window
             ShowMessage($"表示できる画像が見つかりませんでした。\n{path}");
             return;
         }
+
+        // 別のものを開いたら、スライドショーは終わり
+        StopSlideshow();
 
         // 開き直したときは、ファイルが更新されているかもしれないので読み直す
         _cache.Clear();
@@ -192,6 +210,14 @@ public partial class MainWindow : Window
             .OfType<string>()
             .ToList();
 
+        // スライドショーでは最後の次は先頭に戻るので、最後の画像を出しているときは先頭も先読みする
+        if (_slideshow && _direction >= 0 && _navigator.Index == _navigator.Count - 1
+            && _navigator.Files is [var first, ..] && !neighbors.Contains(first, StringComparer.OrdinalIgnoreCase)
+            && !string.Equals(first, currentPath, StringComparison.OrdinalIgnoreCase))
+        {
+            neighbors.Insert(0, first);
+        }
+
         _cache.Retain(currentPath, neighbors);
         foreach (var path in neighbors)
         {
@@ -212,6 +238,9 @@ public partial class MainWindow : Window
 
         UpdateStatus(); // ここではまだ前の画像が出ているので、縦横・倍率は「読み込み中」になる
 
+        // スライドショーの次の送りは、この画像を出してから数え直す（手で送ったときも）
+        CancelSlideWait();
+
         // 表示する画像の読み込みを先に始めてから、前後の先読みを予約する
         var loadTask = _cache.GetAsync(path);
         UpdatePrefetch(path);
@@ -226,6 +255,7 @@ public partial class MainWindow : Window
 
             HideMessage();
             SetImage(image, path);
+            ScheduleSlide();
         }
         catch (OperationCanceledException)
         {
@@ -253,6 +283,9 @@ public partial class MainWindow : Window
             {
                 Debug.WriteLine(ex);
             }
+
+            // 読めない画像でも止まらず、いつもの時間が経ったら次へ
+            ScheduleSlide();
         }
 
         UpdateStatus();
@@ -286,6 +319,8 @@ public partial class MainWindow : Window
     private void ShowThumbnails()
     {
         if (_navigator.Count == 0) return;
+
+        StopSlideshow();
 
         if (!_thumbnailMode)
         {
@@ -422,11 +457,147 @@ public partial class MainWindow : Window
     private void UpdateThumbnailButton()
     {
         ThumbnailButton.IsEnabled = _navigator.Count > 0;
+        SlideshowButton.IsEnabled = _navigator.Count > 0;
         ThumbnailIcon.Text = _thumbnailMode ? GlyphSingleImage : GlyphThumbnails;
         ThumbnailButton.ToolTip = _thumbnailMode
             ? "選んだ画像を開く (T / Enter)"
             : "サムネイル一覧 (T)";
     }
+
+    // ------------------------------------------------------------
+    // スライドショー
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 今の画像からスライドショーを始める。一覧からなら、選択中の画像を開いて始める。
+    /// 1枚の時間は ini の [Slideshow] IntervalSeconds（始めるときに読み直すので、起動中に書き換えても効く）。
+    /// </summary>
+    private void StartSlideshow()
+    {
+        if (_slideshow || _navigator.Count == 0) return;
+
+        _settings.SlideshowIntervalSeconds = AppSettings.Load(AppSettings.DefaultPath).SlideshowIntervalSeconds;
+        _slideshow = true;
+        UpdateSlideshowUi();
+
+        if (_thumbnailMode)
+        {
+            // 一覧を閉じて選択中の画像を開く。出たところから数え始める（ShowCurrentAsync → ScheduleSlide）
+            CloseThumbnails(backToPrevious: false);
+            if (_slideshow && !_slideTimer.IsEnabled && !_slideWaitingForAnimation
+                && _bitmap is not null && string.Equals(_bitmapPath, _navigator.Current, StringComparison.OrdinalIgnoreCase))
+            {
+                ScheduleSlide(); // 一覧に入る前と同じ画像で、読み直さなかった
+            }
+            return;
+        }
+
+        // 読み込み中なら、出たところで ScheduleSlide される。出ている（または読めなかった）なら、今から数える
+        bool loading = _bitmap is not null && !string.Equals(_bitmapPath, _navigator.Current, StringComparison.OrdinalIgnoreCase);
+        if (!loading)
+        {
+            ScheduleSlide();
+        }
+    }
+
+    private void StopSlideshow()
+    {
+        if (!_slideshow) return;
+
+        _slideshow = false;
+        CancelSlideWait();
+        UpdateSlideshowUi();
+    }
+
+    private void ToggleSlideshow()
+    {
+        if (_slideshow)
+        {
+            StopSlideshow();
+        }
+        else
+        {
+            StartSlideshow();
+        }
+    }
+
+    /// <summary>表示した画像の、次の送りを予約する。静止画は時間で、アニメーションは1周したところで送る</summary>
+    private void ScheduleSlide()
+    {
+        if (!_slideshow) return;
+
+        CancelSlideWait();
+        if (_player.IsAnimated && !_player.IsFinished)
+        {
+            _slideWaitingForAnimation = true;
+        }
+        else
+        {
+            _slideTimer.Interval = TimeSpan.FromSeconds(_settings.SlideshowIntervalSeconds);
+            _slideTimer.Start();
+        }
+    }
+
+    private void CancelSlideWait()
+    {
+        _slideTimer.Stop();
+        _slideWaitingForAnimation = false;
+    }
+
+    /// <summary>次の画像へ。最後の画像の次は先頭に戻る</summary>
+    private void AdvanceSlide()
+    {
+        if (!_slideshow) return;
+
+        CancelSlideWait();
+        bool moved = _navigator.MoveNext() || _navigator.MoveFirst();
+        if (moved)
+        {
+            Navigate(true, +1);
+        }
+        else
+        {
+            ScheduleSlide(); // 1枚しかない。そのまま出し続ける
+        }
+    }
+
+    private void SlideTimer_Tick(object? sender, EventArgs e)
+    {
+        _slideTimer.Stop();
+
+        // 最小化している間は送らない（見ていないので）。戻すまで待ち直す
+        if (WindowState == WindowState.Minimized)
+        {
+            ScheduleSlide();
+            return;
+        }
+
+        AdvanceSlide();
+    }
+
+    private void AnimationPlayer_PlayCompleted(object? sender, EventArgs e)
+    {
+        if (_slideshow && _slideWaitingForAnimation)
+        {
+            AdvanceSlide();
+        }
+    }
+
+    private void UpdateSlideshowUi()
+    {
+        SlideshowButton.IsEnabled = _navigator.Count > 0;
+        SlideshowIcon.Text = _slideshow ? GlyphStop : GlyphPlay;
+        SlideshowButton.ToolTip = _slideshow ? "スライドショーを止める (S / Esc)" : "スライドショー (S)";
+
+        var visibility = _slideshow ? Visibility.Visible : Visibility.Collapsed;
+        SlideshowItem.Visibility = visibility;
+        SlideshowSeparator.Visibility = visibility;
+        SlideshowText.Text = _slideshow
+            ? string.Create(CultureInfo.InvariantCulture, $"スライドショー {_settings.SlideshowIntervalSeconds:0.###}秒")
+            : string.Empty;
+    }
+
+    private void SlideshowButton_Click(object sender, RoutedEventArgs e) => ToggleSlideshow();
 
     // ------------------------------------------------------------
     // 情報パネル（EXIF）
@@ -806,6 +977,7 @@ public partial class MainWindow : Window
         _settings.AnimationMaxMemoryMB = onDisk.AnimationMaxMemoryMB;
         _settings.PrefetchMaxMemoryMB = onDisk.PrefetchMaxMemoryMB;
         _settings.ThumbnailMaxMemoryMB = onDisk.ThumbnailMaxMemoryMB;
+        _settings.SlideshowIntervalSeconds = onDisk.SlideshowIntervalSeconds;
 
         var hwnd = new WindowInteropHelper(this).Handle;
         var placement = User32.WINDOWPLACEMENT.Create();
@@ -1075,6 +1247,18 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            case Key.S:
+                if (!e.IsRepeat)
+                {
+                    ToggleSlideshow();
+                }
+                break;
+
+            // Esc はスライドショーを先に止める（全画面はそのまま。もう一度 Esc で全画面も終わる）
+            case Key.Escape when _slideshow:
+                StopSlideshow();
+                break;
+
             case Key.Enter:
                 // 押しっぱなしで全画面が点滅しないように、キーリピートは無視
                 if (!e.IsRepeat)
@@ -1176,6 +1360,14 @@ public partial class MainWindow : Window
                 if (!e.IsRepeat)
                 {
                     ToggleInfoPanel();
+                }
+                break;
+
+            // 選択中の画像を開いて、そこからスライドショー
+            case Key.S:
+                if (!e.IsRepeat)
+                {
+                    StartSlideshow();
                 }
                 break;
 

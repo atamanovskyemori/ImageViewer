@@ -41,6 +41,9 @@ public sealed class AnimationTimeline
     /// <summary>今のコマを、あとどれだけ表示するか</summary>
     public TimeSpan RemainingInFrame { get; private set; }
 
+    /// <summary>最後のコマまで再生し終わった回数（スライドショーで「1周したら次へ」に使う）。Restart で 0 に戻る</summary>
+    public int CompletedPlays => _completedPlays;
+
     /// <summary>時間を進める。コマが変わったら true。</summary>
     public bool Advance(TimeSpan elapsed)
     {
@@ -52,7 +55,13 @@ public sealed class AnimationTimeline
         // 無限ループで長時間止まっていた（スリープ復帰など）ときに、何周もぐるぐる回さない
         if (_loopCount == 0 && elapsed > _totalDuration)
         {
-            elapsed = TimeSpan.FromTicks(elapsed.Ticks % _totalDuration.Ticks);
+            // 飛ばした周回も「再生し終わった」に数える（今の位置からの1周ぶんは下のループで数える）
+            long skipped = elapsed.Ticks / _totalDuration.Ticks - 1;
+            if (skipped > 0)
+            {
+                _completedPlays = (int)Math.Min(int.MaxValue, _completedPlays + skipped);
+            }
+            elapsed = TimeSpan.FromTicks(elapsed.Ticks % _totalDuration.Ticks + _totalDuration.Ticks);
         }
 
         bool changed = false;

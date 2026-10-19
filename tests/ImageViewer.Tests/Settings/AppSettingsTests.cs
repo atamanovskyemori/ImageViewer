@@ -197,6 +197,46 @@ namespace ImageViewer.Tests.Settings
         }
 
         [TestMethod]
+        public void Slideshow_Interval_Defaults_And_Is_Always_Written()
+        {
+            var settings = new AppSettings();
+
+            Assert.AreEqual(5.0, settings.SlideshowIntervalSeconds);
+            Assert.AreEqual("5", settings.ToIni().Get("Slideshow", "IntervalSeconds"));
+        }
+
+        [TestMethod]
+        public void Slideshow_Interval_Accepts_Decimals()
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse("[Slideshow]\nIntervalSeconds=2.5\n"));
+
+            Assert.AreEqual(2.5, settings.SlideshowIntervalSeconds);
+            Assert.AreEqual("2.5", settings.ToIni().Get("Slideshow", "IntervalSeconds"));
+        }
+
+        [TestMethod]
+        [DataRow("0")]
+        [DataRow("0.1")]
+        [DataRow("99999")]
+        [DataRow("fast")]
+        [DataRow("NaN")]
+        public void Out_Of_Range_Slideshow_Interval_Falls_Back_To_Default(string value)
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse($"[Slideshow]\nIntervalSeconds={value}\n"));
+
+            Assert.AreEqual(AppSettings.DefaultSlideshowIntervalSeconds, settings.SlideshowIntervalSeconds);
+        }
+
+        [TestMethod]
+        public void Slideshow_Interval_RoundTrips_Through_File()
+        {
+            var path = Path.Combine(_dir, AppSettings.FileName);
+            new AppSettings { SlideshowIntervalSeconds = 12.25 }.TrySave(path);
+
+            Assert.AreEqual(12.25, AppSettings.Load(path).SlideshowIntervalSeconds);
+        }
+
+        [TestMethod]
         public void Missing_Maximized_Means_Not_Maximized()
         {
             var ini = IniFile.Parse("[Window]\nLeft=0\nTop=0\nWidth=800\nHeight=600\n");

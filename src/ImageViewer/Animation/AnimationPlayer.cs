@@ -32,6 +32,9 @@ public sealed class AnimationPlayer
     /// <summary>表示するコマや、再生・一時停止の状態が変わったとき</summary>
     public event EventHandler? Changed;
 
+    /// <summary>最後のコマまで再生し終わったとき（1周ごと。スライドショーで次の画像へ進むのに使う）</summary>
+    public event EventHandler? PlayCompleted;
+
     /// <summary>アニメーションを読み込んでいるか（静止画なら false）</summary>
     public bool IsAnimated => _timeline is not null;
 
@@ -141,7 +144,9 @@ public sealed class AnimationPlayer
         var elapsed = now - _lastTick;
         _lastTick = now;
 
+        int playsBefore = _timeline.CompletedPlays;
         bool changed = _timeline.Advance(elapsed);
+        bool completed = _timeline.CompletedPlays > playsBefore;
 
         if (!_timeline.IsFinished && !IsPaused && !_suspended)
         {
@@ -151,6 +156,12 @@ public sealed class AnimationPlayer
         if (changed || _timeline.IsFinished)
         {
             Changed?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Changed の中で別の画像に切り替わっていることもあるので、最後に知らせる
+        if (completed)
+        {
+            PlayCompleted?.Invoke(this, EventArgs.Empty);
         }
     }
 }

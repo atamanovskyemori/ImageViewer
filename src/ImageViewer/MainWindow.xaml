@@ -106,6 +106,15 @@
                     <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE946;" />
                 </ToggleButton>
 
+                <!-- スライドショーの開始 / 停止 -->
+                <Button x:Name="SlideshowButton"
+                        Style="{StaticResource ToolBarButton}"
+                        ToolTip="スライドショー (S)"
+                        IsEnabled="False"
+                        Click="SlideshowButton_Click">
+                    <TextBlock x:Name="SlideshowIcon" Style="{StaticResource ToolBarIcon}" Text="&#xE768;" />
+                </Button>
+
                 <Separator />
 
                 <!-- 並び順。Tag に FileSortKey を持たせて、クリック時にそれを読む -->
@@ -161,6 +170,11 @@
                 <TextBlock x:Name="FrameText" MinWidth="72" TextAlignment="Right" />
             </StatusBarItem>
             <Separator x:Name="FrameSeparator" DockPanel.Dock="Right" Visibility="Collapsed" />
+            <!-- スライドショー中だけ出す -->
+            <StatusBarItem x:Name="SlideshowItem" DockPanel.Dock="Right" Visibility="Collapsed">
+                <TextBlock x:Name="SlideshowText" />
+            </StatusBarItem>
+            <Separator x:Name="SlideshowSeparator" DockPanel.Dock="Right" Visibility="Collapsed" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock x:Name="IndexText" MinWidth="56" TextAlignment="Right" />
             </StatusBarItem>

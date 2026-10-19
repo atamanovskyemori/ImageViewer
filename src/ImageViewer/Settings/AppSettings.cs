@@ -27,6 +27,7 @@ public sealed class AppSettings
     private const string SortSection = "Sort";
     private const string MemorySection = "Memory";
     private const string ThumbnailSection = "Thumbnail";
+    private const string SlideshowSection = "Slideshow";
 
     /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
     public const int DefaultAnimationMaxMemoryMB = 256;
@@ -36,6 +37,13 @@ public sealed class AppSettings
 
     /// <summary>サムネイルに使うメモリ上限の既定値（MB）</summary>
     public const int DefaultThumbnailMaxMemoryMB = 256;
+
+    /// <summary>スライドショーで1枚を表示する時間の既定値（秒）</summary>
+    public const double DefaultSlideshowIntervalSeconds = 5;
+
+    // スライドショーの時間として受け付ける範囲（秒）。範囲外は既定値に戻す
+    public const double MinSlideshowIntervalSeconds = 0.5;
+    public const double MaxSlideshowIntervalSeconds = 3600;
 
     // メモリ上限として受け付ける範囲（MB）。範囲外は既定値に戻す
     private const int MinMemoryMB = 1;
@@ -59,6 +67,12 @@ public sealed class AppSettings
 
     /// <summary>サムネイル一覧の大きさ（DIP）。Ctrl+ホイールで変えたものを保存する</summary>
     public int ThumbnailSize { get; set; } = ThumbnailLayout.DefaultSize;
+
+    /// <summary>
+    /// スライドショーで静止画1枚を表示する時間（秒、小数も可）。アニメーションは時間に関係なく1周したら次へ。
+    /// ini を手で編集して変える。
+    /// </summary>
+    public double SlideshowIntervalSeconds { get; set; } = DefaultSlideshowIntervalSeconds;
 
     /// <summary>保存されたウィンドウの位置。まだ保存されていなければ null（既定の位置で開く）</summary>
     public WindowBounds? Window { get; set; }
@@ -149,6 +163,12 @@ public sealed class AppSettings
             settings.ThumbnailMaxMemoryMB = thumbnailMB;
         }
 
+        if (double.TryParse(ini.Get(SlideshowSection, "IntervalSeconds"), NumberStyles.Float, CultureInfo.InvariantCulture, out double interval)
+            && interval is >= MinSlideshowIntervalSeconds and <= MaxSlideshowIntervalSeconds)
+        {
+            settings.SlideshowIntervalSeconds = interval;
+        }
+
         // 選べる大きさ以外の値（手で書いた 150 など）は、一番近い大きさにする
         if (TryGetInt(ini, ThumbnailSection, "Size", out int thumbnailSize))
         {
@@ -180,6 +200,8 @@ public sealed class AppSettings
         ini.Set(MemorySection, "ThumbnailMaxMB", Format(ThumbnailMaxMemoryMB));
 
         ini.Set(ThumbnailSection, "Size", Format(ThumbnailLayout.Normalize(ThumbnailSize)));
+
+        ini.Set(SlideshowSection, "IntervalSeconds", SlideshowIntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
 
         return ini;
     }

@@ -170,6 +170,58 @@ namespace ImageViewer.Tests.Animation
         }
 
         [TestMethod]
+        public void CompletedPlays_Counts_Each_Pass_Over_The_Last_Frame()
+        {
+            var timeline = Create(loopCount: 0);
+
+            timeline.Advance(Ms(599));
+            Assert.AreEqual(0, timeline.CompletedPlays);
+
+            timeline.Advance(Ms(1));
+            Assert.AreEqual(1, timeline.CompletedPlays);
+            Assert.AreEqual(0, timeline.Index);
+
+            timeline.Advance(Ms(600));
+            Assert.AreEqual(2, timeline.CompletedPlays);
+        }
+
+        [TestMethod]
+        public void CompletedPlays_Counts_Skipped_Loops_After_A_Long_Stall()
+        {
+            var timeline = Create(loopCount: 0);
+            timeline.Advance(Ms(50)); // inside frame 0
+
+            // 3 full loops and 150ms more: 50 + 1950 = 2000 = 3 * 600 + 200 -> frame 1, 100ms into it
+            timeline.Advance(Ms(1950));
+
+            Assert.AreEqual(3, timeline.CompletedPlays);
+            Assert.AreEqual(1, timeline.Index);
+            Assert.AreEqual(Ms(100), timeline.RemainingInFrame);
+        }
+
+        [TestMethod]
+        public void CompletedPlays_Includes_The_Final_Play()
+        {
+            var timeline = Create(loopCount: 1);
+
+            timeline.Advance(Ms(600));
+
+            Assert.IsTrue(timeline.IsFinished);
+            Assert.AreEqual(1, timeline.CompletedPlays);
+        }
+
+        [TestMethod]
+        public void Restart_Resets_CompletedPlays()
+        {
+            var timeline = Create(loopCount: 0);
+            timeline.Advance(Ms(600));
+
+            timeline.Restart();
+
+            Assert.AreEqual(0, timeline.CompletedPlays);
+        }
+
+        [TestMethod]
         public void Empty_Delays_Throws()
         {
             Assert.ThrowsExactly<ArgumentException>(() => new AnimationTimeline(Array.Empty<TimeSpan>(), 0));

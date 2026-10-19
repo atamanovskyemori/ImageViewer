@@ -75,6 +75,9 @@ public partial class MainWindow : Window
     // 表示中のアニメーションが1周するのを待っているか
     private bool _slideWaitingForAnimation;
 
+    // 今の画像を出してからの時間（アニメーションを ini の時間まで繰り返すのに使う）
+    private readonly Stopwatch _slideClock = new();
+
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
 
@@ -521,19 +524,29 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>表示した画像の、次の送りを予約する。静止画は時間で、アニメーションは1周したところで送る</summary>
+    private TimeSpan SlideInterval => TimeSpan.FromSeconds(_settings.SlideshowIntervalSeconds);
+
+    /// <summary>
+    /// 表示した画像の、次の送りを予約する。静止画は ini の時間で送る。
+    /// アニメーションは、ini の時間が過ぎてから1周し終わったところで送る（短いものは時間になるまで繰り返す。長いものは1周で送る）
+    /// </summary>
     private void ScheduleSlide()
     {
         if (!_slideshow) return;
 
         CancelSlideWait();
-        if (_player.IsAnimated && !_player.IsFinished)
+        if (_player.IsAnimated)
         {
             _slideWaitingForAnimation = true;
+            _slideClock.Restart();
+            if (_player.IsFinished)
+            {
+                _player.Restart(); // 再生し終わって止まっていたら、もう一度動かす
+            }
         }
         else
         {
-            _slideTimer.Interval = TimeSpan.FromSeconds(_settings.SlideshowIntervalSeconds);
+            _slideTimer.Interval = SlideInterval;
             _slideTimer.Start();
         }
     }
@@ -541,6 +554,7 @@ public partial class MainWindow : Window
     private void CancelSlideWait()
     {
         _slideTimer.Stop();
+        _slideClock.Reset();
         _slideWaitingForAnimation = false;
     }
 
@@ -577,10 +591,18 @@ public partial class MainWindow : Window
 
     private void AnimationPlayer_PlayCompleted(object? sender, EventArgs e)
     {
-        if (_slideshow && _slideWaitingForAnimation)
+        if (!_slideshow || !_slideWaitingForAnimation) return;
+
+        if (_slideClock.Elapsed >= SlideInterval)
         {
             AdvanceSlide();
         }
+        else if (_player.IsFinished)
+        {
+            // 再生回数が決まっているアニメーションが、時間になる前に止まった。時間になるまで繰り返す
+            _player.Restart();
+        }
+        // 無限ループのものは、そのまま次の周へ
     }
 
     private void UpdateSlideshowUi()

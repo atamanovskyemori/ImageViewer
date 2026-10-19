@@ -99,6 +99,17 @@ public sealed class AnimationPlayer
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>最初のコマから再生し直す（再生し終わって止まっていても動き出す）</summary>
+    public void Restart()
+    {
+        if (_timeline is null) return;
+
+        _timeline.Restart();
+        IsPaused = false;
+        UpdateTimer();
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>1コマ進める / 戻す。コマ送りしたら一時停止にする。</summary>
     public void Step(int direction)
     {

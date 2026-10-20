@@ -24,6 +24,7 @@ public sealed class FolderNavigator
 
     private List<string> _files = [];
     private int _index = -1;
+    private string? _directory;
 
     public string? Current => _index >= 0 && _index < _files.Count ? _files[_index] : null;
 
@@ -31,6 +32,9 @@ public sealed class FolderNavigator
     public int Index => _index;
 
     public int Count => _files.Count;
+
+    /// <summary>今開いているフォルダ（フルパス）。何も開いていなければ null</summary>
+    public string? CurrentDirectory => _directory;
 
     /// <summary>今の並び順の画像一覧（サムネイル一覧に使う）。並び順を変えると中身の順番も変わる</summary>
     public IReadOnlyList<string> Files => _files;
@@ -105,13 +109,15 @@ public sealed class FolderNavigator
 
         _files = files;
         _index = files.FindIndex(f => string.Equals(f, fullPath, StringComparison.OrdinalIgnoreCase));
+        _directory = directory;
         return true;
     }
 
-    /// <summary>フォルダを開き、先頭の画像を選択する</summary>
-    public bool OpenDirectory(string directoryPath)
+    /// <summary>フォルダを開き、先頭の画像を選択する（selectLast なら最後の画像）</summary>
+    public bool OpenDirectory(string directoryPath, bool selectLast = false)
     {
-        var files = EnumerateImages(Path.GetFullPath(directoryPath));
+        var fullPath = Path.GetFullPath(directoryPath);
+        var files = EnumerateImages(fullPath);
         if (files.Count == 0)
         {
             return false;
@@ -120,8 +126,22 @@ public sealed class FolderNavigator
         Sort(files);
 
         _files = files;
-        _index = 0;
+        _index = selectLast ? files.Count - 1 : 0;
+        _directory = Path.TrimEndingDirectorySeparator(fullPath);
         return true;
+    }
+
+    /// <summary>フォルダに表示できる画像が1枚でもあるか。読めないフォルダは「無い」扱い</summary>
+    public static bool ContainsImages(string directoryPath)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(directoryPath).Any(IsSupported);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     public bool MoveNext() => MoveTo(_index + 1);

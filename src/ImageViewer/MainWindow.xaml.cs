@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ImageViewer.Animation;
+using ImageViewer.Dialogs;
 using ImageViewer.Imaging;
 using ImageViewer.Interop;
 using ImageViewer.Metadata;
@@ -78,6 +79,19 @@ public partial class MainWindow : Window
     // 今の画像を出してからの時間（アニメーションを ini の時間まで繰り返すのに使う）
     private readonly Stopwatch _slideClock = new();
 
+    // 隣のフォルダを探している・端のダイアログを出している間は true（重ねて動かさない）
+    private bool _folderBusy;
+
+    // フォルダの移動でたどる範囲の一番上。ファイル・フォルダを開いたときに、そのフォルダの親に決める
+    // （隣のフォルダへ移っても変えない。ここより上には行かない）
+    private string? _folderScopeRoot;
+
+    // 端のダイアログを閉じてからの時間。ホイールを回し続けたときに、閉じた直後にまた出ないようにする
+    private readonly Stopwatch _sinceEdgeDialog = new();
+
+    // 画面下のお知らせを消すタイマー
+    private readonly DispatcherTimer _noticeTimer = new() { Interval = TimeSpan.FromSeconds(2.5) };
+
     // 直前の移動方向（+1: 次へ / -1: 前へ）。先読みする方向の優先度に使う
     private int _direction = 1;
 
@@ -119,6 +133,11 @@ public partial class MainWindow : Window
         _player.Changed += AnimationPlayer_Changed;
         _player.PlayCompleted += AnimationPlayer_PlayCompleted;
         _slideTimer.Tick += SlideTimer_Tick;
+        _noticeTimer.Tick += (_, _) =>
+        {
+            _noticeTimer.Stop();
+            NoticeHost.Visibility = Visibility.Collapsed;
+        };
 
         ThumbnailView.ThumbnailSize = _settings.ThumbnailSize;
 
@@ -163,6 +182,11 @@ public partial class MainWindow : Window
 
         // 別のものを開いたら、スライドショーは終わり
         StopSlideshow();
+
+        // フォルダの移動は、開いたフォルダと同じ階層のフォルダ（とその中のサブフォルダ全部）をたどる
+        _folderScopeRoot = _navigator.CurrentDirectory is { } openedFolder
+            ? Path.GetDirectoryName(openedFolder) ?? openedFolder // ドライブのルートを開いたときは、その中だけ
+            : null;
 
         // 開き直したときは、ファイルが更新されているかもしれないので読み直す
         _cache.Clear();
@@ -468,6 +492,169 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------
+    // フォルダの移動
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 次（前）の画像へ。フォルダの端なら、隣のフォルダへ行くか・同じフォルダの反対の端に戻るかをダイアログで聞く。
+    /// </summary>
+    /// <param name="direction">+1: 次へ / -1: 前へ</param>
+    /// <param name="suppressDialog">端でもダイアログを出さない（キーの押しっぱなし・ホイールの回しすぎ）</param>
+    private void GoNextOrAsk(int direction, bool suppressDialog)
+    {
+        bool moved = direction > 0 ? _navigator.MoveNext() : _navigator.MovePrevious();
+        if (moved)
+        {
+            Navigate(true, direction);
+            return;
+        }
+
+        // 押しっぱなしで端に来たときに、ダイアログが出た瞬間にボタンが押されてしまわないよう、押し直したときだけ聞く
+        if (!suppressDialog && _navigator.Count > 0)
+        {
+            _ = AskAtFolderEdgeAsync(direction);
+        }
+    }
+
+    private async Task AskAtFolderEdgeAsync(int direction)
+    {
+        if (_folderBusy || _navigator.CurrentDirectory is not { } folder) return;
+
+        _folderBusy = true;
+        try
+        {
+            string? sibling = await FindSiblingFolderAsync(folder, direction);
+            if (!string.Equals(folder, _navigator.CurrentDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return; // 探している間に別のフォルダが開かれた
+            }
+
+            bool stillAtEdge = direction > 0 ? _navigator.Index == _navigator.Count - 1 : _navigator.Index == 0;
+            if (!stillAtEdge)
+            {
+                return; // 探している間に、手で別の画像へ移った
+            }
+
+            var choice = FolderEdgeDialog.Ask(this, direction, sibling is null ? null : FolderDisplayName(sibling));
+            switch (choice)
+            {
+                case FolderEdgeChoice.MoveToFolder when sibling is not null:
+                    // 次のフォルダは先頭から、前のフォルダは最後から
+                    OpenSiblingFolder(sibling, selectLast: direction < 0);
+                    break;
+
+                case FolderEdgeChoice.Wrap:
+                    Navigate(direction > 0 ? _navigator.MoveFirst() : _navigator.MoveLast(), direction);
+                    break;
+            }
+        }
+        finally
+        {
+            _folderBusy = false;
+            _sinceEdgeDialog.Restart();
+        }
+    }
+
+    /// <summary>↑↓（一覧では Ctrl+↑↓）で隣のフォルダへ。↓ は先頭の画像、↑ は最後の画像を出す</summary>
+    private async Task MoveToSiblingFolderAsync(int direction)
+    {
+        if (_folderBusy || _navigator.CurrentDirectory is not { } folder) return;
+
+        _folderBusy = true;
+        try
+        {
+            string? sibling = await FindSiblingFolderAsync(folder, direction);
+            if (!string.Equals(folder, _navigator.CurrentDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (sibling is null)
+            {
+                ShowNotice(direction > 0 ? "次のフォルダはありません" : "前のフォルダはありません");
+                return;
+            }
+
+            OpenSiblingFolder(sibling, selectLast: direction < 0);
+        }
+        finally
+        {
+            _folderBusy = false;
+        }
+    }
+
+    /// <summary>隣のフォルダを裏で探す（ネットワークドライブなどで遅くても、画面を止めない）</summary>
+    private async Task<string?> FindSiblingFolderAsync(string folder, int direction)
+    {
+        // 範囲が決まっていない・範囲の外にいる（通常は無い）ときは、今のフォルダの親を範囲にする
+        string root = _folderScopeRoot ?? Path.GetDirectoryName(folder) ?? folder;
+        try
+        {
+            return await Task.Run(() => FolderSiblings.Find(folder, root, direction));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 隣のフォルダを開く。1枚表示ならその画像を出し、一覧なら一覧のまま中身を入れ替える。
+    /// （OpenPath と違って、フォルダでも一覧には切り替えない）
+    /// </summary>
+    private void OpenSiblingFolder(string folder, bool selectLast)
+    {
+        bool opened;
+        try
+        {
+            opened = _navigator.OpenDirectory(folder, selectLast);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            ShowNotice($"フォルダを開けませんでした（{ex.Message}）");
+            return;
+        }
+
+        if (!opened)
+        {
+            ShowNotice($"表示できる画像がありませんでした：{Path.GetFileName(folder)}");
+            return;
+        }
+
+        StopSlideshow();
+        _cache.Clear();
+        _thumbnailCache?.Invalidate();
+        _infoPath = null;
+        _direction = selectLast ? -1 : +1;
+        ShowNotice(FolderDisplayName(folder));
+
+        if (_thumbnailMode)
+        {
+            _pathBeforeThumbnails = null; // 前のフォルダの画像には戻れない
+            ThumbnailView.SetFiles(_navigator.Files, _navigator.Index);
+            UpdateStatus();
+        }
+        else
+        {
+            _ = ShowCurrentAsync();
+        }
+    }
+
+    /// <summary>範囲の一番上からの相対パス（サブフォルダに入ったときに、どこにいるか分かるように）</summary>
+    private string FolderDisplayName(string folder) =>
+        _folderScopeRoot is { } root ? FolderSiblings.DisplayName(folder, root) : Path.GetFileName(folder);
+
+    /// <summary>画面下に数秒だけお知らせを出す</summary>
+    private void ShowNotice(string text)
+    {
+        NoticeText.Text = text;
+        NoticeHost.Visibility = Visibility.Visible;
+        _noticeTimer.Stop();
+        _noticeTimer.Start();
+    }
+
+    // ------------------------------------------------------------
     // スライドショー
     // ------------------------------------------------------------
 
@@ -579,8 +766,8 @@ public partial class MainWindow : Window
     {
         _slideTimer.Stop();
 
-        // 最小化している間は送らない（見ていないので）。戻すまで待ち直す
-        if (WindowState == WindowState.Minimized)
+        // 最小化している間・フォルダの端のダイアログを出している間は送らない。待ち直す
+        if (WindowState == WindowState.Minimized || _folderBusy)
         {
             ScheduleSlide();
             return;
@@ -591,7 +778,7 @@ public partial class MainWindow : Window
 
     private void AnimationPlayer_PlayCompleted(object? sender, EventArgs e)
     {
-        if (!_slideshow || !_slideWaitingForAnimation) return;
+        if (!_slideshow || !_slideWaitingForAnimation || _folderBusy) return;
 
         if (_slideClock.Elapsed >= SlideInterval)
         {
@@ -1317,13 +1504,22 @@ public partial class MainWindow : Window
             case Key.Right:
             case Key.PageDown:
             case Key.Space:
-                Navigate(_navigator.MoveNext(), +1);
+                GoNextOrAsk(+1, e.IsRepeat);
                 break;
 
             case Key.Left:
             case Key.PageUp:
             case Key.Back:
-                Navigate(_navigator.MovePrevious(), -1);
+                GoNextOrAsk(-1, e.IsRepeat);
+                break;
+
+            // ↓ で次のフォルダの先頭、↑ で前のフォルダの最後
+            case Key.Down:
+                _ = MoveToSiblingFolderAsync(+1);
+                break;
+
+            case Key.Up:
+                _ = MoveToSiblingFolderAsync(-1);
                 break;
 
             case Key.Home:
@@ -1385,6 +1581,15 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            // 一覧の ↑↓ は選択の移動なので、フォルダの移動は Ctrl+↑↓
+            case Key.Down when ctrl:
+                _ = MoveToSiblingFolderAsync(+1);
+                break;
+
+            case Key.Up when ctrl:
+                _ = MoveToSiblingFolderAsync(-1);
+                break;
+
             // 選択中の画像を開いて、そこからスライドショー
             case Key.S:
                 if (!e.IsRepeat)
@@ -1422,14 +1627,9 @@ public partial class MainWindow : Window
         }
         else
         {
-            if (e.Delta > 0)
-            {
-                Navigate(_navigator.MovePrevious(), -1);
-            }
-            else
-            {
-                Navigate(_navigator.MoveNext(), +1);
-            }
+            // ホイールは連続で来るので、端のダイアログを閉じた直後は出し直さない
+            bool justClosed = _sinceEdgeDialog.IsRunning && _sinceEdgeDialog.Elapsed < TimeSpan.FromSeconds(1);
+            GoNextOrAsk(e.Delta > 0 ? -1 : +1, suppressDialog: justClosed);
         }
 
         e.Handled = true;

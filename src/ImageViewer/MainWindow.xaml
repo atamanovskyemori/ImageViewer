@@ -236,6 +236,23 @@
                        IsHitTestVisible="False"
                        Text="画像をドラッグ＆ドロップするか、Ctrl+O で開きます" />
 
+            <!-- 一時的なお知らせ（「次のフォルダはありません」など）。数秒で消える。全画面でも見えるように画像の上に出す -->
+            <Border x:Name="NoticeHost"
+                    Grid.Column="0"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="24,0,24,32"
+                    Padding="16,8"
+                    CornerRadius="6"
+                    Background="#E0303030"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed">
+                <TextBlock x:Name="NoticeText"
+                           Foreground="#FFF0F0F0"
+                           FontSize="14"
+                           TextWrapping="Wrap" />
+            </Border>
+
             <!-- 画像の情報。開くと、その分だけ画像表示領域（一覧）が狭くなる -->
             <meta:InfoPanel x:Name="InfoView"
                             Grid.Column="1"

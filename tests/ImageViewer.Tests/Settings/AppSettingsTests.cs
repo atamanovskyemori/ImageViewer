@@ -237,6 +237,21 @@ namespace ImageViewer.Tests.Settings
         }
 
         [TestMethod]
+        public void InfoPanel_Width_Defaults_RoundTrips_And_Is_Clamped()
+        {
+            Assert.AreEqual(300, new AppSettings().InfoPanelWidth);
+            Assert.AreEqual("300", new AppSettings().ToIni().Get("InfoPanel", "Width"));
+
+            var path = Path.Combine(_dir, AppSettings.FileName);
+            new AppSettings { InfoPanelWidth = 480 }.TrySave(path);
+            Assert.AreEqual(480, AppSettings.Load(path).InfoPanelWidth);
+
+            Assert.AreEqual(AppSettings.MinInfoPanelWidth, AppSettings.FromIni(IniFile.Parse("[InfoPanel]\nWidth=50\n")).InfoPanelWidth);
+            Assert.AreEqual(AppSettings.MaxInfoPanelWidth, AppSettings.FromIni(IniFile.Parse("[InfoPanel]\nWidth=99999\n")).InfoPanelWidth);
+            Assert.AreEqual(300, AppSettings.FromIni(IniFile.Parse("[InfoPanel]\nWidth=wide\n")).InfoPanelWidth);
+        }
+
+        [TestMethod]
         public void Missing_Maximized_Means_Not_Maximized()
         {
             var ini = IniFile.Parse("[Window]\nLeft=0\nTop=0\nWidth=800\nHeight=600\n");

@@ -103,6 +103,7 @@ public static class ExifTags
     public const ushort FocalLengthIn35mm = 0xA405;
     public const ushort LensMake = 0xA433;
     public const ushort LensModel = 0xA434;
+    public const ushort UserComment = 0x9286;
 
     // GPS IFD
     public const ushort GpsLatitudeRef = 0x0001;

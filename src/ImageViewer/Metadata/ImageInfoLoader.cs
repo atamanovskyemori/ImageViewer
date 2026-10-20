@@ -37,6 +37,8 @@ public static class ImageInfoLoader
         int? width = null, height = null;
         bool appliesOrientation = false;
         ExifData? exif = null;
+        IReadOnlyList<PngText>? pngTexts = null;
+        GenerationInfo? generation = null;
 
         try
         {
@@ -52,6 +54,25 @@ public static class ImageInfoLoader
             appliesOrientation = kind is ImageKind.Jpeg or ImageKind.Tiff;
 
             exif = ExifReader.Read(stream);
+
+            // 画像生成AIの生成情報。PNG はテキストチャンク "parameters"、JPEG / WebP は EXIF の UserComment に入っている
+            if (kind == ImageKind.Png)
+            {
+                pngTexts = PngTextReader.Read(stream);
+                var parameters = pngTexts.FirstOrDefault(t => string.Equals(t.Keyword, "parameters", StringComparison.OrdinalIgnoreCase));
+                generation = GenerationInfo.Parse(parameters?.Text, GenerationSources.PngParameters);
+            }
+
+            if (generation is null
+                && GenerationInfo.DecodeUserComment(exif?.Get(ExifIfd.Exif, ExifTags.UserComment)?.Bytes) is { } comment)
+            {
+                // カメラのふつうのコメントをプロンプトと間違えないよう、「Steps: …」の設定の行があるときだけ生成情報とみなす
+                var parsed = GenerationInfo.Parse(comment, GenerationSources.ExifUserComment);
+                if (parsed is { Parameters.Count: > 0 })
+                {
+                    generation = parsed;
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -59,7 +80,7 @@ public static class ImageInfoLoader
         }
 
         var facts = new FileFacts(path, length, lastWriteTime, format, width, height, appliesOrientation);
-        return ImageInfoBuilder.Build(facts, exif);
+        return ImageInfoBuilder.Build(facts, exif, generation, pngTexts);
     }
 
     private enum ImageKind

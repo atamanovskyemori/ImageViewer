@@ -10,7 +10,8 @@ public sealed record InfoRow(string Label, string Value);
 public sealed record InfoSection(string Title, IReadOnlyList<InfoRow> Rows);
 
 /// <summary>1枚の画像の情報。情報パネルにそのまま出す</summary>
-public sealed record ImageInfo(string Path, IReadOnlyList<InfoSection> Sections)
+/// <param name="Generation">画像生成AIの生成情報（プロンプトなど）。無ければ null。コピーのメニューに使う</param>
+public sealed record ImageInfo(string Path, IReadOnlyList<InfoSection> Sections, GenerationInfo? Generation = null)
 {
     /// <summary>コピー用のテキスト（「項目名: 値」を1行ずつ、見出しごとに空行で区切る）</summary>
     public string ToText()
@@ -48,7 +49,34 @@ public sealed record FileFacts(
 /// <summary>ファイルの情報と EXIF から、情報パネルに出す行を作る。値が無い・おかしい行は出さない</summary>
 public static class ImageInfoBuilder
 {
-    public static ImageInfo Build(FileFacts file, ExifData? exif)
+    // PNG のテキストのうち、パネルに出す長さの上限（ComfyUI のノード構成など、とても長いものがあるので）
+    private const int MaxTextLength = 2000;
+
+    // 生成情報の設定のうち、日本語の項目名を付けるもの。それ以外は WebUI の書き方のまま出す
+    private static readonly Dictionary<string, string> GenerationLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Steps"] = "ステップ数",
+        ["Sampler"] = "サンプラー",
+        ["Schedule type"] = "スケジューラ",
+        ["CFG scale"] = "CFG スケール",
+        ["Seed"] = "シード",
+        ["Size"] = "サイズ",
+        ["Model"] = "モデル",
+        ["Model hash"] = "モデルのハッシュ",
+        ["Denoising strength"] = "ノイズ除去の強さ",
+        ["Hires upscale"] = "高解像度化の倍率",
+        ["Hires upscaler"] = "高解像度化の拡大方法",
+        ["Hires steps"] = "高解像度化のステップ数",
+        ["Version"] = "バージョン",
+    };
+
+    /// <param name="generation">生成AIの生成情報。無ければ null</param>
+    /// <param name="pngTexts">PNG のテキストチャンク。生成情報として読んだもの（parameters）以外を「PNG テキスト」に出す</param>
+    public static ImageInfo Build(
+        FileFacts file,
+        ExifData? exif,
+        GenerationInfo? generation = null,
+        IReadOnlyList<PngText>? pngTexts = null)
     {
         var sections = new List<InfoSection>();
 
@@ -61,11 +89,44 @@ public static class ImageInfoBuilder
         Add(fileRows, "更新日時", file.LastWriteTime?.ToString("yyyy/MM/dd HH:mm:ss", CultureInfo.InvariantCulture));
         AddSection(sections, "ファイル", fileRows);
 
-        if (exif is null)
+        // ----- 生成情報（プロンプトなど） -----
+        if (generation is not null)
         {
-            return new ImageInfo(file.Path, sections);
+            var genRows = new List<InfoRow>();
+            Add(genRows, "プロンプト", generation.Prompt);
+            Add(genRows, "ネガティブプロンプト", generation.NegativePrompt);
+            foreach (var (key, value) in generation.Parameters)
+            {
+                Add(genRows, GenerationLabels.TryGetValue(key, out var label) ? label : key, value);
+            }
+            AddSection(sections, "生成情報", genRows);
         }
 
+        if (exif is not null)
+        {
+            AddExifSections(sections, exif, generation);
+        }
+
+        // ----- PNG のテキスト（生成情報として読んだもの以外） -----
+        if (pngTexts is not null)
+        {
+            var textRows = new List<InfoRow>();
+            foreach (var text in pngTexts)
+            {
+                if (generation is not null && string.Equals(text.Keyword, "parameters", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                Add(textRows, text.Keyword, Shorten(text.Text));
+            }
+            AddSection(sections, "PNG テキスト", textRows);
+        }
+
+        return new ImageInfo(file.Path, sections, generation);
+    }
+
+    private static void AddExifSections(List<InfoSection> sections, ExifData exif, GenerationInfo? generation)
+    {
         // ----- 撮影 -----
         var shotRows = new List<InfoRow>();
         Add(shotRows, "撮影日時", ExifFormat.DateTime(
@@ -106,10 +167,17 @@ public static class ImageInfoBuilder
         Add(otherRows, "ソフトウェア", exif.GetText(ExifIfd.Primary, ExifTags.Software));
         Add(otherRows, "作者", exif.GetText(ExifIfd.Primary, ExifTags.Artist));
         Add(otherRows, "著作権", exif.GetText(ExifIfd.Primary, ExifTags.Copyright));
-        AddSection(sections, "その他", otherRows);
 
-        return new ImageInfo(file.Path, sections);
+        // UserComment は、生成情報として読んだのでなければ、ただのコメントとして出す
+        if (generation?.Source != GenerationSources.ExifUserComment)
+        {
+            Add(otherRows, "コメント", Shorten(GenerationInfo.DecodeUserComment(exif.Get(ExifIfd.Exif, ExifTags.UserComment)?.Bytes)));
+        }
+        AddSection(sections, "その他", otherRows);
     }
+
+    private static string? Shorten(string? text) =>
+        text is { Length: > MaxTextLength } ? text[..MaxTextLength] + "…（以下省略）" : text;
 
     /// <summary>
     /// 「4000 × 3000」。JPEG / TIFF で EXIF の向きが 90° 回転（5〜8）なら、表示に合わせて縦横を入れ替える

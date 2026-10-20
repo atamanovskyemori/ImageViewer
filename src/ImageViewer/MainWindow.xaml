@@ -115,6 +115,15 @@
                     <TextBlock x:Name="SlideshowIcon" Style="{StaticResource ToolBarIcon}" Text="&#xE768;" />
                 </Button>
 
+                <!-- 表示中の画像があるフォルダを、エクスプローラーで開く（画像を選んだ状態で） -->
+                <Button x:Name="ExplorerButton"
+                        Style="{StaticResource ToolBarButton}"
+                        ToolTip="エクスプローラーで開く (E)"
+                        IsEnabled="False"
+                        Click="ExplorerButton_Click">
+                    <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE838;" />
+                </Button>
+
                 <Separator />
 
                 <!-- 並び順。Tag に FileSortKey を持たせて、クリック時にそれを読む -->
@@ -186,9 +195,11 @@
 
         <!-- ===== 画像表示領域（右に情報パネル） ===== -->
         <Grid>
+            <!-- 画像表示 | 境目（ドラッグで幅を変える）| 情報パネル。パネルの列の幅はコードで決める -->
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" MinWidth="200" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="InfoColumn" Width="0" />
             </Grid.ColumnDefinitions>
 
             <!--
@@ -254,8 +265,20 @@
             </Border>
 
             <!-- 画像の情報。開くと、その分だけ画像表示領域（一覧）が狭くなる -->
+            <GridSplitter x:Name="InfoSplitter"
+                          Grid.Column="1"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          ResizeDirection="Columns"
+                          ResizeBehavior="PreviousAndNext"
+                          Background="#FF3F3F46"
+                          Focusable="False"
+                          ToolTip="ドラッグで情報パネルの幅を変える"
+                          Visibility="Collapsed"
+                          DragCompleted="InfoSplitter_DragCompleted" />
+
             <meta:InfoPanel x:Name="InfoView"
-                            Grid.Column="1"
+                            Grid.Column="2"
                             Visibility="Collapsed" />
         </Grid>
     </DockPanel>

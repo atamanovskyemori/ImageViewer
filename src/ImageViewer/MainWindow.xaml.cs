@@ -485,6 +485,7 @@ public partial class MainWindow : Window
     {
         ThumbnailButton.IsEnabled = _navigator.Count > 0;
         SlideshowButton.IsEnabled = _navigator.Count > 0;
+        ExplorerButton.IsEnabled = _navigator.Count > 0;
         ThumbnailIcon.Text = _thumbnailMode ? GlyphSingleImage : GlyphThumbnails;
         ThumbnailButton.ToolTip = _thumbnailMode
             ? "選んだ画像を開く (T / Enter)"
@@ -809,14 +810,63 @@ public partial class MainWindow : Window
     private void SlideshowButton_Click(object sender, RoutedEventArgs e) => ToggleSlideshow();
 
     // ------------------------------------------------------------
+    // エクスプローラーで開く
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 表示中の画像（一覧なら選択中の画像）があるフォルダをエクスプローラーで開き、その画像を選んだ状態にする。
+    /// ビューアでは編集・削除をしない方針なので、ファイルの操作はエクスプローラーに任せる。
+    /// </summary>
+    private void OpenInExplorer()
+    {
+        if (_navigator.Current is not { } path) return;
+
+        if (!File.Exists(path))
+        {
+            // 消された・移動された。フォルダが残っていれば、フォルダだけ開く
+            var folder = Path.GetDirectoryName(path);
+            if (folder is null || !Directory.Exists(folder) || !Shell32.OpenFolderAndSelect(folder))
+            {
+                ShowNotice("ファイルが見つかりませんでした");
+            }
+            return;
+        }
+
+        if (Shell32.OpenFolderAndSelect(path))
+        {
+            return;
+        }
+
+        // シェルの関数が失敗したときの予備
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Debug.WriteLine(ex);
+            ShowNotice("エクスプローラーを開けませんでした");
+        }
+    }
+
+    private void ExplorerButton_Click(object sender, RoutedEventArgs e) => OpenInExplorer();
+
+    // ------------------------------------------------------------
     // 情報パネル（EXIF）
     // ------------------------------------------------------------
 
     private void ToggleInfoPanel()
     {
         _infoVisible = !_infoVisible;
-        InfoView.Visibility = _infoVisible ? Visibility.Visible : Visibility.Collapsed;
+        var visibility = _infoVisible ? Visibility.Visible : Visibility.Collapsed;
+        InfoView.Visibility = visibility;
+        InfoSplitter.Visibility = visibility;
         InfoButton.IsChecked = _infoVisible;
+
+        // 隠すときは列の幅も 0 にする（最小幅が残らないように）
+        InfoColumn.MinWidth = _infoVisible ? AppSettings.MinInfoPanelWidth : 0;
+        InfoColumn.MaxWidth = _infoVisible ? AppSettings.MaxInfoPanelWidth : double.PositiveInfinity;
+        InfoColumn.Width = new GridLength(_infoVisible ? _settings.InfoPanelWidth : 0);
 
         if (_infoVisible)
         {
@@ -880,6 +930,15 @@ public partial class MainWindow : Window
     }
 
     private void InfoButton_Click(object sender, RoutedEventArgs e) => ToggleInfoPanel();
+
+    /// <summary>境目をドラッグし終わったら、今の幅を覚えておく（終了時に ini に保存する）</summary>
+    private void InfoSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        if (_infoVisible && InfoColumn.ActualWidth > 0)
+        {
+            _settings.InfoPanelWidth = AppSettings.ClampInfoPanelWidth((int)Math.Round(InfoColumn.ActualWidth));
+        }
+    }
 
     // ------------------------------------------------------------
     // 表示（ズーム・パン・回転）
@@ -1463,6 +1522,13 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            case Key.E:
+                if (!e.IsRepeat)
+                {
+                    OpenInExplorer();
+                }
+                break;
+
             // Esc はスライドショーを先に止める（全画面はそのまま。もう一度 Esc で全画面も終わる）
             case Key.Escape when _slideshow:
                 StopSlideshow();
@@ -1595,6 +1661,14 @@ public partial class MainWindow : Window
                 if (!e.IsRepeat)
                 {
                     StartSlideshow();
+                }
+                break;
+
+            // 選択中の画像を、エクスプローラーで選んだ状態で開く
+            case Key.E:
+                if (!e.IsRepeat)
+                {
+                    OpenInExplorer();
                 }
                 break;
 

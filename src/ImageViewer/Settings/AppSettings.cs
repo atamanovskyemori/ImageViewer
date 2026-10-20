@@ -28,6 +28,7 @@ public sealed class AppSettings
     private const string MemorySection = "Memory";
     private const string ThumbnailSection = "Thumbnail";
     private const string SlideshowSection = "Slideshow";
+    private const string InfoPanelSection = "InfoPanel";
 
     /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
     public const int DefaultAnimationMaxMemoryMB = 256;
@@ -44,6 +45,11 @@ public sealed class AppSettings
     // スライドショーの時間として受け付ける範囲（秒）。範囲外は既定値に戻す
     public const double MinSlideshowIntervalSeconds = 0.5;
     public const double MaxSlideshowIntervalSeconds = 3600;
+
+    /// <summary>情報パネルの幅の既定値と範囲（DIP）</summary>
+    public const int DefaultInfoPanelWidth = 300;
+    public const int MinInfoPanelWidth = 200;
+    public const int MaxInfoPanelWidth = 1200;
 
     // メモリ上限として受け付ける範囲（MB）。範囲外は既定値に戻す
     private const int MinMemoryMB = 1;
@@ -73,6 +79,12 @@ public sealed class AppSettings
     /// ini を手で編集して変える。
     /// </summary>
     public double SlideshowIntervalSeconds { get; set; } = DefaultSlideshowIntervalSeconds;
+
+    /// <summary>情報パネルの幅（DIP）。境目をドラッグして変えたものを保存する</summary>
+    public int InfoPanelWidth { get; set; } = DefaultInfoPanelWidth;
+
+    /// <summary>情報パネルの幅を、受け付ける範囲に収める</summary>
+    public static int ClampInfoPanelWidth(int width) => Math.Clamp(width, MinInfoPanelWidth, MaxInfoPanelWidth);
 
     /// <summary>保存されたウィンドウの位置。まだ保存されていなければ null（既定の位置で開く）</summary>
     public WindowBounds? Window { get; set; }
@@ -169,6 +181,12 @@ public sealed class AppSettings
             settings.SlideshowIntervalSeconds = interval;
         }
 
+        // 範囲外の幅（手で書いた 50 など）は、範囲の端に収める
+        if (TryGetInt(ini, InfoPanelSection, "Width", out int infoWidth))
+        {
+            settings.InfoPanelWidth = ClampInfoPanelWidth(infoWidth);
+        }
+
         // 選べる大きさ以外の値（手で書いた 150 など）は、一番近い大きさにする
         if (TryGetInt(ini, ThumbnailSection, "Size", out int thumbnailSize))
         {
@@ -202,6 +220,8 @@ public sealed class AppSettings
         ini.Set(ThumbnailSection, "Size", Format(ThumbnailLayout.Normalize(ThumbnailSize)));
 
         ini.Set(SlideshowSection, "IntervalSeconds", SlideshowIntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+
+        ini.Set(InfoPanelSection, "Width", Format(ClampInfoPanelWidth(InfoPanelWidth)));
 
         return ini;
     }

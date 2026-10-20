@@ -26,6 +26,8 @@ public partial class InfoPanel : UserControl
         SectionList.Visibility = Visibility.Visible;
         MessageText.Visibility = Visibility.Collapsed;
         CopyMenuItem.IsEnabled = true;
+        CopyPromptMenuItem.IsEnabled = info.Generation?.Prompt is not null;
+        CopyNegativeMenuItem.IsEnabled = info.Generation?.NegativePrompt is not null;
     }
 
     /// <summary>情報の代わりにメッセージを出す（何も開いていない、読めなかった、など）</summary>
@@ -37,15 +39,23 @@ public partial class InfoPanel : UserControl
         MessageText.Text = message;
         MessageText.Visibility = Visibility.Visible;
         CopyMenuItem.IsEnabled = false;
+        CopyPromptMenuItem.IsEnabled = false;
+        CopyNegativeMenuItem.IsEnabled = false;
     }
 
-    private void CopyMenuItem_Click(object sender, RoutedEventArgs e)
+    private void CopyMenuItem_Click(object sender, RoutedEventArgs e) => Copy(_info?.ToText());
+
+    private void CopyPromptMenuItem_Click(object sender, RoutedEventArgs e) => Copy(_info?.Generation?.Prompt);
+
+    private void CopyNegativeMenuItem_Click(object sender, RoutedEventArgs e) => Copy(_info?.Generation?.NegativePrompt);
+
+    private static void Copy(string? text)
     {
-        if (_info is null) return;
+        if (string.IsNullOrEmpty(text)) return;
 
         try
         {
-            Clipboard.SetText(_info.ToText());
+            Clipboard.SetText(text);
         }
         catch (COMException)
         {

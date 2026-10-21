@@ -8,3 +8,6 @@ obj/
 *.rsuser
 TestResults/
 publish/
+
+## vcpkg（libwebp の DLL を作るのに使ったもの。DLL は native/x64/ に入れてある）
+vcpkg/

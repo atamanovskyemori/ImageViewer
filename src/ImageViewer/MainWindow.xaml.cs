@@ -152,6 +152,32 @@ public partial class MainWindow : Window
 
         UpdateSortButtons();
         UpdateStatus();
+        ShowNativeLibraryWarning();
+    }
+
+    /// <summary>
+    /// WebP の DLL が読めるか調べて、読めなければステータスバーに出す（理由はツールチップ）。
+    /// DLL が無くても WIC だけで動くので止めはしないが、黙っていると原因が分からないので。
+    /// </summary>
+    private void ShowNativeLibraryWarning()
+    {
+        (string Summary, string Detail)? problem;
+        try
+        {
+            problem = NativeLibraryCheck.CheckWebP();
+        }
+        catch (Exception ex)
+        {
+            problem = ("WebP DLL の確認に失敗", ex.Message);
+        }
+
+        if (problem is not { } p) return;
+
+        Debug.WriteLine($"{p.Summary}: {p.Detail}");
+        NativeWarningText.Text = "⚠ " + p.Summary;
+        NativeWarningItem.ToolTip = p.Detail;
+        NativeWarningItem.Visibility = Visibility.Visible;
+        NativeWarningSeparator.Visibility = Visibility.Visible;
     }
 
     // ------------------------------------------------------------
@@ -1120,6 +1146,15 @@ public partial class MainWindow : Window
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
+
+        // 起動時の位置の復元で、DPI の違うモニタへ移ったとき。WPF が DPI の比率でサイズを変えてしまうので、
+        // 保存したサイズ（物理ピクセル）をもう一度当て直す（同じモニタなので、もう DPI は変わらない）
+        if (_restoringPlacement && _placementReapplyCount < 2)
+        {
+            _placementReapplyCount++;
+            Dispatcher.InvokeAsync(ApplySavedPlacement, DispatcherPriority.Send);
+        }
+
         if (_bitmap is null) return;
 
         UpdateImageBaseSize();
@@ -1198,6 +1233,16 @@ public partial class MainWindow : Window
         RestoreWindowPlacement();
     }
 
+    // 位置の復元中（画面に出るまで）か。この間の DPI の変化では、保存したサイズを当て直す
+    private bool _restoringPlacement;
+    private int _placementReapplyCount;
+
+    protected override void OnContentRendered(EventArgs e)
+    {
+        base.OnContentRendered(e);
+        _restoringPlacement = false; // 画面に出た後のモニタ間の移動は、ふつうに WPF に任せる
+    }
+
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
@@ -1207,7 +1252,32 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 前回の位置とサイズを戻す。
+    /// 保存したのは物理ピクセルなので、作られたときのモニタと DPI が違うモニタへ移すと、
+    /// WPF が DPI の比率でサイズを変えてしまう（150% のモニタから 100% のモニタへ、など）。
+    /// そこで2回当てる：1回目でそのモニタへ移り（ここで DPI が変わる）、2回目で正しいサイズにする。
+    /// DPI の変化が後から届いた場合は、OnDpiChanged でもう一度当てる。
+    /// </summary>
     private void RestoreWindowPlacement()
+    {
+        if (_settings.Window is null)
+        {
+            return;
+        }
+
+        _restoringPlacement = true;
+        ApplySavedPlacement();
+        ApplySavedPlacement();
+
+        if (_settings.Window.Maximized)
+        {
+            // Show の前に設定しておけば、上で決めた位置のモニタで最大化して出る
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void ApplySavedPlacement()
     {
         if (_settings.Window is not { } bounds)
         {
@@ -1225,11 +1295,23 @@ public partial class MainWindow : Window
             Bottom = bounds.Top + bounds.Height,
         };
 
-        // 保存した位置が画面外になっていても（モニタを外した等）、OS が画面内に収めてくれる
-        if (User32.SetWindowPlacement(hwnd, ref placement) && bounds.Maximized)
+        // 保存した位置が画面外になっていても（モニタを外した等）、OS が画面内に収めてくれる。
+        // ShowCmd は、もう画面に出ていれば今の状態を保つ（最大化中に当て直しても最大化が解けないように）。
+        // まだ出ていなければ SW_HIDE のまま（表示は WPF の Show に任せる）
+        if (User32.IsWindowVisible(hwnd) && User32.GetWindowPlacement(hwnd, ref placement))
         {
-            // Show の前に設定しておけば、上で決めた位置のモニタで最大化して出る
-            WindowState = WindowState.Maximized;
+            placement.NormalPosition = new User32.RECT
+            {
+                Left = bounds.Left,
+                Top = bounds.Top,
+                Right = bounds.Left + bounds.Width,
+                Bottom = bounds.Top + bounds.Height,
+            };
+        }
+
+        if (!User32.SetWindowPlacement(hwnd, ref placement))
+        {
+            Debug.WriteLine("ウィンドウの位置を戻せませんでした");
         }
     }
 

@@ -184,6 +184,11 @@
                 <TextBlock x:Name="SlideshowText" />
             </StatusBarItem>
             <Separator x:Name="SlideshowSeparator" DockPanel.Dock="Right" Visibility="Collapsed" />
+            <!-- WebP の DLL が読めなかったときだけ出す（詳しい理由はツールチップ） -->
+            <StatusBarItem x:Name="NativeWarningItem" DockPanel.Dock="Right" Visibility="Collapsed">
+                <TextBlock x:Name="NativeWarningText" Foreground="#FFB36B00" />
+            </StatusBarItem>
+            <Separator x:Name="NativeWarningSeparator" DockPanel.Dock="Right" Visibility="Collapsed" />
             <StatusBarItem DockPanel.Dock="Right">
                 <TextBlock x:Name="IndexText" MinWidth="56" TextAlignment="Right" />
             </StatusBarItem>

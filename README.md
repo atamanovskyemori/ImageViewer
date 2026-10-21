@@ -65,6 +65,7 @@ src/ImageViewer/
   Interop/
     LibWebP.cs                libwebp.dll の P/Invoke 定義
     LibWebPDemux.cs           libwebpdemux.dll の P/Invoke 定義（アニメーションWebP）
+    NativeLibraryCheck.cs     WebP の DLL が読めるか調べて、読めない理由を返す
     Shell32.cs                エクスプローラーでフォルダを開いてファイルを選ぶ（SHOpenFolderAndSelectItems）
     User32.cs                 ウィンドウ位置の取得・復元（Get/SetWindowPlacement）
 tests/ImageViewer.Tests/
@@ -96,7 +97,9 @@ tests/ImageViewer.Tests/
 **3つとも必要。** 入れ替えや削除をするときは、必ず3つまとめて扱う。
 1つでも欠けると、依存している DLL が連鎖して読み込めなくなる。
 たとえば `libsharpyuv.dll` が無いと `libwebp.dll` が読めず、それに依存する `libwebpdemux.dll` も読めない。
-このときエラーは出ず、DLL が無いときと同じ動き（静止画は WIC だけ、アニメーションWebP は1コマ目だけ静止画）になるので注意。
+このときエラーは出ず、DLL が無いときと同じ動き（静止画は WIC だけ、アニメーションWebP は1コマ目だけ静止画）になる。
+そのかわり、起動時に3つとも読めるか調べて、読めなければステータスバーに「⚠ WebP DLL 不足：libsharpyuv.dll」のように出す
+（マウスを乗せると、詳しい理由：無い DLL・64 ビット版でない・Visual C++ ランタイムが無い、など）。
 
 どれも x64 版（exe が x64 固定なので）。実行には Visual C++ 再頒布可能パッケージ（`VCRUNTIME140.dll`）も必要だが、たいていの PC には入っている。
 
@@ -164,6 +167,7 @@ Width=300
 - `[Window]`：通常時のウィンドウ位置とサイズ（物理ピクセル）と、最大化していたか
   - 最大化・全画面で終了しても、元に戻したときの位置とサイズを保存する。全画面は次回は通常表示で開く（全画面の前に最大化していたら最大化）
   - 保存した位置が画面外（モニタを外した等）なら、OS が画面内に収める
+  - モニタごとに拡大率（DPI）が違っても、保存したときと同じ大きさで戻す（違う DPI のモニタへ移ると WPF が大きさを変えてしまうので、移った後にもう一度当て直している）
 - `[Sort]`：並び順（`Name` / `LastWriteTime` / `Size`）と降順か
 - `[Memory]`：メモリの上限（MB、1〜65536）。アプリに設定画面は無いので、ここを手で書き換える
   - `AnimationMaxMB`：アニメーション1枚に使うメモリ。超えたら1コマ目だけ表示

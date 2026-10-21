@@ -128,6 +128,130 @@ namespace ImageViewer.Tests.Navigation
             CollectionAssert.AreEqual(new[] { a, x, missingFolderFile }, files);
         }
 
+        private FolderListing Rescan(FolderNavigator navigator) =>
+            FolderNavigator.ListFolder(_root, navigator.SortKey, navigator.SortDescending);
+
+        [TestMethod]
+        public void Rescan_Adds_New_Files_And_Keeps_Current()
+        {
+            CreateFile("a.jpg", 1);
+            CreateFile("c.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveLast();
+
+            CreateFile("b.jpg", 1);
+            CreateFile("d.jpg", 1);
+            Assert.IsTrue(navigator.ApplyListing(Rescan(navigator)));
+
+            CollectionAssert.AreEqual(new[] { "a.jpg", "b.jpg", "c.jpg", "d.jpg" }, Names(navigator));
+            Assert.AreEqual("c.jpg", Path.GetFileName(navigator.Current));
+            Assert.AreEqual(2, navigator.Index);
+        }
+
+        [TestMethod]
+        public void Deleted_Current_File_Is_Kept_Until_Moving_Away()
+        {
+            CreateFile("a.jpg", 1);
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveToIndex(1);
+
+            File.Delete(b);
+            navigator.ApplyListing(Rescan(navigator));
+
+            // Still shown, in its old place
+            CollectionAssert.AreEqual(new[] { "a.jpg", "b.jpg", "c.jpg" }, Names(navigator));
+            Assert.AreEqual(b, navigator.Current);
+
+            Assert.IsTrue(navigator.MoveNext());
+            CollectionAssert.AreEqual(new[] { "a.jpg", "c.jpg" }, Names(navigator));
+            Assert.AreEqual("c.jpg", Path.GetFileName(navigator.Current));
+            Assert.AreEqual(1, navigator.Index);
+        }
+
+        [TestMethod]
+        public void Deleted_Current_File_Is_Dropped_When_Moving_Backward()
+        {
+            CreateFile("a.jpg", 1);
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveToIndex(1);
+
+            File.Delete(b);
+            navigator.ApplyListing(Rescan(navigator));
+
+            Assert.IsTrue(navigator.MovePrevious());
+            CollectionAssert.AreEqual(new[] { "a.jpg", "c.jpg" }, Names(navigator));
+            Assert.AreEqual(0, navigator.Index);
+        }
+
+        [TestMethod]
+        public void Deleted_Selection_Moves_To_Same_Position_In_Thumbnails()
+        {
+            CreateFile("a.jpg", 1);
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveToIndex(1);
+
+            File.Delete(b);
+            navigator.ApplyListing(Rescan(navigator), keepMissingCurrent: false);
+
+            CollectionAssert.AreEqual(new[] { "a.jpg", "c.jpg" }, Names(navigator));
+            Assert.AreEqual("c.jpg", Path.GetFileName(navigator.Current));
+        }
+
+        [TestMethod]
+        public void Deleted_Last_Selection_Moves_To_New_Last_In_Thumbnails()
+        {
+            CreateFile("a.jpg", 1);
+            var b = CreateFile("b.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveLast();
+
+            File.Delete(b);
+            navigator.ApplyListing(Rescan(navigator), keepMissingCurrent: false);
+
+            CollectionAssert.AreEqual(new[] { "a.jpg" }, Names(navigator));
+            Assert.AreEqual(0, navigator.Index);
+        }
+
+        [TestMethod]
+        public void DropRemovedCurrent_Removes_The_Kept_File()
+        {
+            CreateFile("a.jpg", 1);
+            CreateFile("b.jpg", 1);
+            var c = CreateFile("c.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+            navigator.MoveLast();
+
+            File.Delete(c);
+            navigator.ApplyListing(Rescan(navigator));
+            Assert.AreEqual(3, navigator.Count);
+
+            Assert.IsTrue(navigator.DropRemovedCurrent());
+            CollectionAssert.AreEqual(new[] { "a.jpg", "b.jpg" }, Names(navigator));
+            Assert.AreEqual("b.jpg", Path.GetFileName(navigator.Current));
+
+            Assert.IsFalse(navigator.DropRemovedCurrent());
+        }
+
+        [TestMethod]
+        public void Only_File_Is_Kept_Even_If_Deleted()
+        {
+            var a = CreateFile("a.jpg", 1);
+            var navigator = Open(FileSortKey.Name, descending: false);
+
+            File.Delete(a);
+            navigator.ApplyListing(Rescan(navigator), keepMissingCurrent: false);
+
+            Assert.AreEqual(1, navigator.Count);
+            Assert.IsFalse(navigator.DropRemovedCurrent());
+            Assert.AreEqual(a, navigator.Current);
+        }
+
         [TestMethod]
         public void OpenSingleFile_Does_Not_List_The_Folder()
         {

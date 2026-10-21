@@ -89,6 +89,13 @@ public partial class MainWindow : Window
     // ファイル・フォルダを開くたびに増やす。古い一覧の結果を捨てるのに使う
     private int _openVersion;
 
+    // 開いているフォルダを見張って、画像が増えた・消えたら一覧に反映する。
+    // 書き込みの途中で読まないよう、変化が 0.5 秒止まってから（書き込みが続いても 3 秒で）知らせてもらう
+    private readonly FolderWatcher _folderWatcher = new(TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(3));
+
+    // 一覧を作っている間にフォルダが変わったので、できたら見直す
+    private bool _rescanAfterListing;
+
     // 隣のフォルダを探している・端のダイアログを出している間は true（重ねて動かさない）
     private bool _folderBusy;
 
@@ -142,6 +149,7 @@ public partial class MainWindow : Window
         _player.Changed += AnimationPlayer_Changed;
         _player.PlayCompleted += AnimationPlayer_PlayCompleted;
         _slideTimer.Tick += SlideTimer_Tick;
+        _folderWatcher.Changed += FolderWatcher_Changed;
         _noticeTimer.Tick += (_, _) =>
         {
             _noticeTimer.Stop();
@@ -223,6 +231,8 @@ public partial class MainWindow : Window
         // 作りかけの一覧があれば、もう使わない
         _openVersion++;
         _listingPending = !isDirectory;
+        _rescanAfterListing = false;
+        _folderWatcher.Watch(_navigator.CurrentDirectory);
 
         // フォルダの移動は、開いたフォルダと同じ階層のフォルダ（とその中のサブフォルダ全部）をたどる
         _folderScopeRoot = _navigator.CurrentDirectory is { } openedFolder
@@ -290,6 +300,79 @@ public partial class MainWindow : Window
         else if (!_thumbnailMode && _navigator.Current is { } current)
         {
             UpdatePrefetch(current); // 一覧ができたので、前後の先読みを始める
+        }
+
+        UpdateStatus();
+
+        if (_rescanAfterListing)
+        {
+            _rescanAfterListing = false;
+            _ = RescanFolderAsync();
+        }
+    }
+
+    private void FolderWatcher_Changed(object? sender, EventArgs e) => _ = RescanFolderAsync();
+
+    /// <summary>
+    /// 見張っているフォルダが変わったので、一覧を作り直して入れ替える。
+    /// <list type="bullet">
+    /// <item>1枚表示で並び順の最後の画像を見ていたら、増えた画像（新しい最後の画像）へ移る（スライドショー中は移らない）</item>
+    /// <item>見ている画像が消されたら、表示したまま。別の画像へ移ったら一覧から外す</item>
+    /// <item>サムネイル一覧にも反映する（選んでいた画像が消されたら、同じ位置の画像を選ぶ）</item>
+    /// </list>
+    /// </summary>
+    private async Task RescanFolderAsync()
+    {
+        if (_listingPending)
+        {
+            _rescanAfterListing = true; // 一覧ができてから見直す
+            return;
+        }
+
+        if (_navigator.CurrentDirectory is not { } folder || _navigator.Current is not { } current) return;
+
+        int version = _openVersion;
+        var key = _navigator.SortKey;
+        bool descending = _navigator.SortDescending;
+
+        FolderListing listing;
+        try
+        {
+            // 明示的に開いた対応外のファイルも、まだあれば一覧に残す
+            listing = await Task.Run(() => FolderNavigator.ListFolder(
+                folder, key, descending, alsoInclude: File.Exists(current) ? current : null));
+        }
+        catch (Exception ex)
+        {
+            // フォルダごと消された・読めなくなった。今の一覧のまま続ける
+            Debug.WriteLine(ex);
+            return;
+        }
+
+        if (version != _openVersion || _listingPending)
+        {
+            return; // 作っている間に別のフォルダを開いた
+        }
+
+        bool wasAtLast = _navigator.Index == _navigator.Count - 1;
+        if (!_navigator.ApplyListing(listing, keepMissingCurrent: !_thumbnailMode))
+        {
+            return;
+        }
+
+        if (_thumbnailMode)
+        {
+            ThumbnailView.SetFiles(_navigator.Files, _navigator.Index);
+        }
+        else if (wasAtLast && !_slideshow && _navigator.Index < _navigator.Count - 1)
+        {
+            // 最後の画像を見ていて、その後ろに画像が増えた（生成中の出力フォルダなど）。新しい最後の画像へ
+            Navigate(_navigator.MoveLast(), +1);
+            return;
+        }
+        else if (_navigator.Current is { } now)
+        {
+            UpdatePrefetch(now); // 前後の画像が変わったかもしれない
         }
 
         UpdateStatus();
@@ -443,6 +526,9 @@ public partial class MainWindow : Window
 
         // 読み込み途中の画像があれば、結果は捨てる（一覧の上にエラーなどを出さないため。戻ったときに読み直す）
         _loadVersion++;
+
+        // 消されたけれど表示していたので残していた画像は、一覧には出さない
+        _navigator.DropRemovedCurrent();
 
         _thumbnailMode = true;
         ThumbnailView.Cache = EnsureThumbnailCache();
@@ -715,6 +801,8 @@ public partial class MainWindow : Window
         StopSlideshow();
         _openVersion++;          // 開いたファイルの一覧を作っている途中なら、もう使わない
         _listingPending = false; // OpenDirectory は一覧まで作り終えている
+        _rescanAfterListing = false;
+        _folderWatcher.Watch(_navigator.CurrentDirectory);
         _cache.Clear();
         _thumbnailCache?.Invalidate();
         _infoPath = null;
@@ -1579,6 +1667,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _player.Load(null); // タイマーを止める
+        _folderWatcher.Dispose();
         base.OnClosed(e);
     }
 

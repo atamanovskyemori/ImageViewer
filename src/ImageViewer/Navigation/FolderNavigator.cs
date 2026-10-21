@@ -46,6 +46,9 @@ public sealed class FolderNavigator
     private int _index = -1;
     private string? _directory;
 
+    // 消された（移動された）けれど、表示中なので一覧に残している画像。離れたら外す
+    private string? _removedCurrent;
+
     public string? Current => _index >= 0 && _index < _files.Count ? _files[_index] : null;
 
     /// <summary>0始まりの現在位置（何も開いていなければ -1）</summary>
@@ -138,6 +141,7 @@ public sealed class FolderNavigator
         _files = [fullPath];
         _index = 0;
         _directory = directory;
+        _removedCurrent = null;
         return true;
     }
 
@@ -150,10 +154,19 @@ public sealed class FolderNavigator
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new ArgumentException("フォルダの中のファイルではありません。", nameof(fullPath));
 
+        return ListFolder(directory, key, descending, alsoInclude: fullPath);
+    }
+
+    /// <summary>
+    /// フォルダの画像を列挙して並べる。UI に触らないので、裏のスレッドから呼んでいい。
+    /// </summary>
+    /// <param name="alsoInclude">対応外の拡張子でも一覧に入れるファイル（明示的に開かれたファイル）</param>
+    public static FolderListing ListFolder(string directory, FileSortKey key, bool descending, string? alsoInclude = null)
+    {
         var files = EnumerateImages(directory);
-        if (!files.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
+        if (alsoInclude is not null && !files.Contains(alsoInclude, StringComparer.OrdinalIgnoreCase))
         {
-            files.Add(fullPath);
+            files.Add(alsoInclude);
         }
 
         Sort(files, key, descending);
@@ -164,8 +177,13 @@ public sealed class FolderNavigator
     /// 裏で作った一覧に入れ替える。今のファイルはそのまま（位置だけ一覧の中に合わせる）。
     /// 作っている間に並び順が変えられていたら、今の並び順で並べ直す。
     /// </summary>
+    /// <param name="keepMissingCurrent">
+    /// 今のファイルが一覧に無い（消された・移動された）とき、true なら元の位置あたりに残して、
+    /// 別の画像へ移ったときに一覧から外す（1枚表示で、見ている画像がいきなり消えないように）。
+    /// false なら一覧から外して、同じ位置の画像を選ぶ（サムネイル一覧）
+    /// </param>
     /// <returns>今のファイルと同じフォルダの一覧で、入れ替えたら true</returns>
-    public bool ApplyListing(FolderListing listing)
+    public bool ApplyListing(FolderListing listing, bool keepMissingCurrent = true)
     {
         var current = Current;
         if (current is null || !string.Equals(listing.Directory, _directory, StringComparison.OrdinalIgnoreCase))
@@ -174,18 +192,57 @@ public sealed class FolderNavigator
         }
 
         var files = new List<string>(listing.Files);
-        if (!files.Contains(current, StringComparer.OrdinalIgnoreCase))
-        {
-            files.Add(current);
-        }
-        if (listing.SortKey != SortKey || listing.SortDescending != SortDescending
-            || files.Count != listing.Files.Count)
+        if (listing.SortKey != SortKey || listing.SortDescending != SortDescending)
         {
             Sort(files);
         }
 
+        _removedCurrent = null;
+        if (!files.Contains(current, StringComparer.OrdinalIgnoreCase))
+        {
+            if (keepMissingCurrent || files.Count == 0)
+            {
+                // 消えたファイルは並べる元の情報が無いので、だいたい元の位置に入れておく
+                files.Insert(Math.Min(_index, files.Count), current);
+                _removedCurrent = current;
+            }
+            else
+            {
+                _files = files;
+                _index = Math.Min(_index, files.Count - 1);
+                return true;
+            }
+        }
+
         _files = files;
         _index = files.FindIndex(f => string.Equals(f, current, StringComparison.OrdinalIgnoreCase));
+        return true;
+    }
+
+    /// <summary>
+    /// 消された（移動された）けれど、表示中なので一覧に残している画像があれば外す。
+    /// 位置は次の画像に移る（最後の画像だったら前の画像）。1枚しかなければ外さない。
+    /// </summary>
+    /// <returns>外したら true</returns>
+    public bool DropRemovedCurrent()
+    {
+        if (_removedCurrent is null || _files.Count <= 1)
+        {
+            return false;
+        }
+
+        int index = _files.FindIndex(f => string.Equals(f, _removedCurrent, StringComparison.OrdinalIgnoreCase));
+        _removedCurrent = null;
+        if (index < 0)
+        {
+            return false;
+        }
+
+        _files.RemoveAt(index);
+        if (index < _index || _index >= _files.Count)
+        {
+            _index--;
+        }
         return true;
     }
 
@@ -204,6 +261,7 @@ public sealed class FolderNavigator
         _files = files;
         _index = selectLast ? files.Count - 1 : 0;
         _directory = Path.TrimEndingDirectorySeparator(fullPath);
+        _removedCurrent = null;
         return true;
     }
 
@@ -240,6 +298,21 @@ public sealed class FolderNavigator
         }
 
         _index = index;
+
+        // 消されたけれど表示中だったので残していた画像は、離れたら一覧から外す
+        if (_removedCurrent is not null && !string.Equals(Current, _removedCurrent, StringComparison.OrdinalIgnoreCase))
+        {
+            int removed = _files.FindIndex(f => string.Equals(f, _removedCurrent, StringComparison.OrdinalIgnoreCase));
+            _removedCurrent = null;
+            if (removed >= 0)
+            {
+                _files.RemoveAt(removed);
+                if (removed < _index)
+                {
+                    _index--;
+                }
+            }
+        }
         return true;
     }
 

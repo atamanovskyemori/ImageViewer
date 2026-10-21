@@ -25,6 +25,18 @@ namespace ImageViewer.Tests.Imaging
         public void Cleanup() => _loader.ReleaseAll();
 
         [TestMethod]
+        public async Task MaxPixelSize_Is_Passed_To_Loader()
+        {
+            var cache = new ImageCache(_loader) { MaxPixelSize = 1920 };
+            await cache.GetAsync("A");
+            Assert.AreEqual(1920, Volatile.Read(ref _loader.LastMaxPixelSize));
+
+            cache.MaxPixelSize = 3840;
+            cache.Prefetch("B");
+            await WaitUntil(() => Volatile.Read(ref _loader.LastMaxPixelSize) == 3840);
+        }
+
+        [TestMethod]
         public async Task Prefetch_IsInterrupted_By_GetAsync()
         {
             var cache = new ImageCache(_loader);
@@ -298,8 +310,11 @@ namespace ImageViewer.Tests.Imaging
                 }
             }
 
-            public DecodedImage Load(string path)
+            public int LastMaxPixelSize;
+
+            public DecodedImage Load(string path, int maxPixelSize = 0)
             {
+                Volatile.Write(ref LastMaxPixelSize, maxPixelSize);
                 if (!_map.TryGetValue(path, out var e))
                 {
                     // If not registered, behave as quick success

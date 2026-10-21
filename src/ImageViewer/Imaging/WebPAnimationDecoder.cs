@@ -37,7 +37,8 @@ public sealed class WebPAnimationDecoder : IImageDecoder
         && header.Slice(12, 4).SequenceEqual("VP8X"u8)
         && (header[Vp8xFlagsOffset] & AnimationFlag) != 0;
 
-    public unsafe DecodedImage Decode(byte[] data)
+    // アニメーションは縮めない（メモリは AnimationMaxMB で抑える）
+    public unsafe DecodedImage Decode(byte[] data, int maxPixelSize)
     {
         // デコーダは data をコピーせずに参照するので、Delete するまで fixed で止めておく
         fixed (byte* src = data)

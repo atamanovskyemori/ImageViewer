@@ -21,5 +21,9 @@ public interface IImageDecoder
     /// 中の BitmapSource は必ず Freeze 済みにすること（UIスレッドに渡すため）。
     /// 失敗したら例外を投げる。
     /// </summary>
-    DecodedImage Decode(byte[] data);
+    /// <param name="maxPixelSize">
+    /// 長い辺がこれを大きく超える静止画は、ここまで縮めて読んでいい（0 なら元の大きさ）。
+    /// 縮めたときも <see cref="DecodedImage.PixelWidth"/> などは元の大きさにすること。縮められないデコーダは無視していい
+    /// </param>
+    DecodedImage Decode(byte[] data, int maxPixelSize);
 }

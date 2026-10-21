@@ -45,7 +45,11 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load(AppSettings.DefaultPath);
 
     // メモリ上限は設定から決まるので、コンストラクタで作る
+    private readonly IImageLoader _loader;
     private readonly ImageCache _cache;
+
+    // 縮めて読んだ画像を、元の大きさで読み直している（読み直した）ファイル。同じ画像で何度も読み直さないように
+    private string? _fullResolutionPath;
     private readonly FolderNavigator _navigator = new();
     private readonly AnimationPlayer _player = new();
 
@@ -132,9 +136,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        _cache = new ImageCache(
-            ImageLoader.CreateDefault(_settings.AnimationMaxMemoryMB * BytesPerMB),
-            _settings.PrefetchMaxMemoryMB * BytesPerMB);
+        _loader = ImageLoader.CreateDefault(_settings.AnimationMaxMemoryMB * BytesPerMB);
+        _cache = new ImageCache(_loader, _settings.PrefetchMaxMemoryMB * BytesPerMB);
 
         _player.Changed += AnimationPlayer_Changed;
         _player.PlayCompleted += AnimationPlayer_PlayCompleted;
@@ -310,6 +313,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdatePrefetch(string currentPath)
     {
+        _cache.MaxPixelSize = MonitorLongSide();
+
         var offsets = _direction >= 0 ? new[] { 1, 2, -1 } : new[] { -1, -2, 1 };
         var neighbors = offsets
             .Select(_navigator.PeekRelative)
@@ -347,7 +352,9 @@ public partial class MainWindow : Window
         // スライドショーの次の送りは、この画像を出してから数え直す（手で送ったときも）
         CancelSlideWait();
 
-        // 表示する画像の読み込みを先に始めてから、前後の先読みを予約する
+        // 表示する画像の読み込みを先に始めてから、前後の先読みを予約する。
+        // 画面よりずっと大きい画像は、画面の大きさに縮めて読む（拡大したら EnsureResolution で読み直す）
+        _cache.MaxPixelSize = MonitorLongSide();
         var loadTask = _cache.GetAsync(path);
         UpdatePrefetch(path);
 
@@ -1036,6 +1043,7 @@ public partial class MainWindow : Window
         _image = image;
         _bitmap = bitmap;
         _bitmapPath = bitmap is null ? null : path;
+        _fullResolutionPath = null;
         ImageView.Source = bitmap;
         _rotation = 0; // 回転は画像ごとにリセット
 
@@ -1060,14 +1068,85 @@ public partial class MainWindow : Window
     /// 等倍（1.0）・回転なしのときの Image のサイズを、DPIを考慮して設定する。
     /// WPFの単位はDIP（1/96インチ）なので、そのままだと150%表示環境で画像が拡大されてしまう。
     /// また画像ファイル自体のDPI（72dpiなど）も無視して、ピクセル数だけで決める。
+    /// 縮めて読んだ画像でも元の大きさで決める（Stretch="Fill" で引き伸ばすので、ズームの計算は元の大きさのまま）。
     /// </summary>
     private void UpdateImageBaseSize()
     {
-        if (_bitmap is null) return;
+        if (_image is null) return;
 
         var dpi = VisualTreeHelper.GetDpi(this);
-        ImageView.Width = _bitmap.PixelWidth / dpi.DpiScaleX;
-        ImageView.Height = _bitmap.PixelHeight / dpi.DpiScaleY;
+        ImageView.Width = _image.PixelWidth / dpi.DpiScaleX;
+        ImageView.Height = _image.PixelHeight / dpi.DpiScaleY;
+    }
+
+    /// <summary>
+    /// 画面に合わせて縮めて読む大きさ。今のウィンドウがあるモニタの長い辺（物理ピクセル）。
+    /// ウィンドウに収めた表示はモニタより大きくならないので、これで足りる（拡大したら元の大きさで読み直す）。
+    /// 取れなければ 0（縮めない）。
+    /// </summary>
+    private int MonitorLongSide()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return 0;
+
+        var monitor = User32.MonitorFromWindow(hwnd, User32.MONITOR_DEFAULTTONEAREST);
+        var info = User32.MONITORINFO.Create();
+        if (monitor == IntPtr.Zero || !User32.GetMonitorInfo(monitor, ref info)) return 0;
+
+        var r = info.Monitor;
+        return Math.Max(r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    /// <summary>
+    /// 縮めて読んだ画像が、表示に足りなくなったら（拡大した・大きいモニタへ移った）元の大きさで読み直す。
+    /// 読み直す間は縮めた画像を引き伸ばして出しておき、読めたら差し替える（ズーム・位置・回転はそのまま）。
+    /// </summary>
+    private void EnsureResolution()
+    {
+        if (_image is not { IsReduced: true } image || _bitmapPath is not { } path) return;
+        if (string.Equals(_fullResolutionPath, path, StringComparison.OrdinalIgnoreCase)) return;
+
+        // 画面に出ている大きさ（物理ピクセル。_zoom は元の画像の1ピクセル = 画面1ピクセルが 1.0）が、
+        // 読んだ画像より大きくなったら読み直す
+        double shown = Math.Max(image.PixelWidth, image.PixelHeight) * _zoom;
+        double decoded = Math.Max(image.Image.PixelWidth, image.Image.PixelHeight);
+        if (shown <= decoded + 1) return; // 丸めの誤差で読み直さないように、1ピクセルは見逃す
+
+        _fullResolutionPath = path;
+        _ = LoadFullResolutionAsync(path);
+    }
+
+    private async Task LoadFullResolutionAsync(string path)
+    {
+        DecodedImage full;
+        try
+        {
+            full = await Task.Run(() => _loader.Load(path));
+        }
+        catch (Exception ex)
+        {
+            // 投げっぱなしで呼んでいるので、ここで拾う。縮めた画像のまま出し続ける
+            Debug.WriteLine(ex);
+            if (string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowNotice(ex is OutOfMemoryException
+                    ? "メモリが足りなくて、元の大きさで読み込めませんでした"
+                    : "元の大きさで読み込めませんでした");
+            }
+            return;
+        }
+
+        // 読んでいる間に別の画像へ移っていたら捨てる
+        if (_image is not { IsReduced: true } || !string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // SetImage を通すとズーム・回転がリセットされるので、画像だけ差し替える（元の大きさは同じ）
+        _image = full;
+        _bitmap = full.Image;
+        ImageView.Source = full.Image;
+        UpdateStatus();
     }
 
     /// <summary>回転を反映した、等倍時の見た目のサイズ（90°/270°なら縦横が入れ替わる）</summary>
@@ -1199,6 +1278,8 @@ public partial class MainWindow : Window
         RenderOptions.SetBitmapScalingMode(
             ImageView,
             _zoom >= 2.0 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
+
+        EnsureResolution();
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
@@ -1556,7 +1637,8 @@ public partial class MainWindow : Window
         }
         else
         {
-            PixelSizeText.Text = $"{_bitmap.PixelWidth} × {_bitmap.PixelHeight}";
+            // 縮めて読んでいても、元の画像の大きさを出す
+            PixelSizeText.Text = $"{_image!.PixelWidth} × {_image.PixelHeight}";
             ZoomText.Text = $"{Math.Round(_zoom * 100)}%";
             SetFrameText(BuildFrameText());
         }

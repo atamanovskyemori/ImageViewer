@@ -25,6 +25,12 @@ public sealed class ImageCache
     // 先読みは同時に1枚まで。表示中の画像のデコードとCPUを取り合わないようにする
     private readonly SemaphoreSlim _prefetchGate = new(1, 1);
 
+    /// <summary>
+    /// 長い辺がこれを大きく超える静止画は、ここまで縮めて読む（0 なら元の大きさ）。画面の大きさを入れる。
+    /// これから読むものに効く（読み終わっているものは読み直さない）。
+    /// </summary>
+    public int MaxPixelSize { get; set; }
+
     /// <param name="prefetchBudgetBytes">先読みに使っていいメモリの合計。表示中の画像は含まない</param>
     public ImageCache(IImageLoader loader, long prefetchBudgetBytes = long.MaxValue)
     {
@@ -156,6 +162,7 @@ public sealed class ImageCache
     {
         var entry = new Entry(prefetch);
         var token = entry.Cancellation.Token;
+        int maxPixelSize = MaxPixelSize; // 裏のスレッドから読まないように、ここで決めておく
 
         if (!prefetch)
         {
@@ -163,7 +170,7 @@ public sealed class ImageCache
             entry.Task = Task.Run(() =>
             {
                 entry.MarkStarted();
-                return _loader.Load(path);
+                return _loader.Load(path, maxPixelSize);
             });
         }
         else
@@ -176,7 +183,7 @@ public sealed class ImageCache
                 {
                     token.ThrowIfCancellationRequested();
                     entry.MarkStarted();
-                    return _loader.Load(path);
+                    return _loader.Load(path, maxPixelSize);
                 }
                 finally
                 {

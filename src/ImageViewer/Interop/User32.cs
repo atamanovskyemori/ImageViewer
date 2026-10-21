@@ -3,7 +3,7 @@
 namespace ImageViewer.Interop;
 
 /// <summary>
-/// ウィンドウ位置の保存・復元に使う user32.dll の P/Invoke 定義。
+/// ウィンドウ位置の保存・復元と、モニタの大きさの取得に使う user32.dll の P/Invoke 定義。
 /// GetWindowPlacement / SetWindowPlacement を使うと、
 /// ・最大化中でも「元に戻したときの位置とサイズ」が取れる
 /// ・保存した位置が画面外（モニタを外した等）でも、OS が画面内に収めてくれる
@@ -56,4 +56,30 @@ internal static class User32
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    // ------------------------------------------------------------
+    // モニタの大きさ（画面に合わせて縮めて読む大きさを決めるのに使う）
+    // ------------------------------------------------------------
+
+    /// <summary>ウィンドウがどのモニタにも重なっていなければ、一番近いモニタを返す</summary>
+    public const int MONITOR_DEFAULTTONEAREST = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int Size;
+        public RECT Monitor;
+        public RECT Work;
+        public int Flags;
+
+        /// <summary>Size を設定済みのものを作る（Size が無いと API が失敗する）</summary>
+        public static MONITORINFO Create() => new() { Size = Marshal.SizeOf<MONITORINFO>() };
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 }

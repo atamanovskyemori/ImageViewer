@@ -102,6 +102,93 @@ namespace ImageViewer.Tests.Navigation
         }
 
         [TestMethod]
+        public void OpenSingleFile_Does_Not_List_The_Folder()
+        {
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("a.jpg", 1);
+
+            var navigator = new FolderNavigator();
+            Assert.IsTrue(navigator.OpenSingleFile(b));
+            Assert.AreEqual(1, navigator.Count);
+            Assert.AreEqual(b, navigator.Current);
+            Assert.AreEqual(_root, navigator.CurrentDirectory);
+        }
+
+        [TestMethod]
+        public void OpenSingleFile_Fails_For_Missing_File()
+        {
+            var navigator = new FolderNavigator();
+            Assert.IsFalse(navigator.OpenSingleFile(Path.Combine(_root, "missing.jpg")));
+            Assert.AreEqual(0, navigator.Count);
+        }
+
+        [TestMethod]
+        public void ApplyListing_Fills_The_Folder_And_Keeps_Current_File()
+        {
+            CreateFile("a.jpg", 1);
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 1);
+
+            var navigator = new FolderNavigator();
+            navigator.OpenSingleFile(b);
+            var listing = FolderNavigator.ListFolderOf(b, navigator.SortKey, navigator.SortDescending);
+
+            Assert.IsTrue(navigator.ApplyListing(listing));
+            CollectionAssert.AreEqual(new[] { "a.jpg", "b.jpg", "c.jpg" }, Names(navigator));
+            Assert.AreEqual(b, navigator.Current);
+            Assert.AreEqual(1, navigator.Index);
+        }
+
+        [TestMethod]
+        public void ListFolderOf_Includes_Explicitly_Opened_Unsupported_File()
+        {
+            CreateFile("a.jpg", 1);
+            var txt = CreateFile("note.txt", 1);
+
+            var navigator = new FolderNavigator();
+            navigator.OpenSingleFile(txt);
+            navigator.ApplyListing(FolderNavigator.ListFolderOf(txt, FileSortKey.Name, descending: false));
+
+            CollectionAssert.AreEqual(new[] { "a.jpg", "note.txt" }, Names(navigator));
+            Assert.AreEqual(txt, navigator.Current);
+        }
+
+        [TestMethod]
+        public void ApplyListing_Resorts_When_Sort_Changed_While_Listing()
+        {
+            CreateFile("a.jpg", 3);
+            var b = CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 2);
+
+            var navigator = new FolderNavigator();
+            navigator.OpenSingleFile(b);
+            var listing = FolderNavigator.ListFolderOf(b, FileSortKey.Name, descending: false);
+
+            navigator.SetSort(FileSortKey.Size, descending: false);
+            Assert.IsTrue(navigator.ApplyListing(listing));
+            CollectionAssert.AreEqual(new[] { "b.jpg", "c.jpg", "a.jpg" }, Names(navigator));
+            Assert.AreEqual(0, navigator.Index);
+        }
+
+        [TestMethod]
+        public void ApplyListing_Ignores_Listing_Of_Another_Folder()
+        {
+            var a = CreateFile("a.jpg", 1);
+            var other = Path.Combine(_root, "other");
+            Directory.CreateDirectory(other);
+            var x = Path.Combine(other, "x.jpg");
+            File.WriteAllBytes(x, []);
+
+            var navigator = new FolderNavigator();
+            navigator.OpenSingleFile(x);
+            var stale = FolderNavigator.ListFolderOf(a, FileSortKey.Name, descending: false);
+
+            Assert.IsFalse(navigator.ApplyListing(stale));
+            Assert.AreEqual(1, navigator.Count);
+            Assert.AreEqual(x, navigator.Current);
+        }
+
+        [TestMethod]
         public void Toggling_Direction_Keeps_Current_File()
         {
             CreateFile("a.jpg", 1);

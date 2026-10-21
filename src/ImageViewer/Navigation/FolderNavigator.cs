@@ -3,6 +3,12 @@
 namespace ImageViewer.Navigation;
 
 /// <summary>
+/// 裏で作ったフォルダの画像一覧（<see cref="FolderNavigator.ListFolderOf"/> の結果）。
+/// 作ったときの並び順も持っておき、入れ替えるときに変わっていたら並べ直す。
+/// </summary>
+public sealed record FolderListing(string Directory, IReadOnlyList<string> Files, FileSortKey SortKey, bool SortDescending);
+
+/// <summary>
 /// 開いた画像と同じフォルダ内の画像一覧を持ち、前後の移動を管理する。
 /// 表示やデコードには関与しない（純粋なリスト管理）。
 /// </summary>
@@ -84,8 +90,24 @@ public sealed class FolderNavigator
     /// <summary>
     /// ファイルを開き、同じフォルダの画像を一覧化する。
     /// 対応外の拡張子でも、明示的に開かれたファイルは一覧に入れて表示を試みる。
+    /// （一覧を裏で作るときは <see cref="OpenSingleFile"/> → <see cref="ListFolderOf"/> → <see cref="ApplyListing"/>）
     /// </summary>
     public bool OpenFile(string filePath)
+    {
+        if (!OpenSingleFile(filePath))
+        {
+            return false;
+        }
+
+        ApplyListing(ListFolderOf(Current!, SortKey, SortDescending));
+        return true;
+    }
+
+    /// <summary>
+    /// ファイルを1枚だけの一覧として開く（フォルダの一覧ができるまでのつなぎ）。
+    /// フォルダは列挙しないので、ファイル数の多いフォルダやネットワークドライブでもすぐ終わる。
+    /// </summary>
+    public bool OpenSingleFile(string filePath)
     {
         var fullPath = Path.GetFullPath(filePath);
         if (!File.Exists(fullPath))
@@ -99,17 +121,57 @@ public sealed class FolderNavigator
             return false;
         }
 
+        _files = [fullPath];
+        _index = 0;
+        _directory = directory;
+        return true;
+    }
+
+    /// <summary>
+    /// ファイルと同じフォルダの画像を列挙して並べる（ファイル自体も必ず入れる）。
+    /// UI に触らないので、裏のスレッドから呼んでいい。
+    /// </summary>
+    public static FolderListing ListFolderOf(string fullPath, FileSortKey key, bool descending)
+    {
+        var directory = Path.GetDirectoryName(fullPath)
+            ?? throw new ArgumentException("フォルダの中のファイルではありません。", nameof(fullPath));
+
         var files = EnumerateImages(directory);
         if (!files.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
         {
             files.Add(fullPath);
         }
 
-        Sort(files);
+        Sort(files, key, descending);
+        return new FolderListing(directory, files, key, descending);
+    }
+
+    /// <summary>
+    /// 裏で作った一覧に入れ替える。今のファイルはそのまま（位置だけ一覧の中に合わせる）。
+    /// 作っている間に並び順が変えられていたら、今の並び順で並べ直す。
+    /// </summary>
+    /// <returns>今のファイルと同じフォルダの一覧で、入れ替えたら true</returns>
+    public bool ApplyListing(FolderListing listing)
+    {
+        var current = Current;
+        if (current is null || !string.Equals(listing.Directory, _directory, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var files = new List<string>(listing.Files);
+        if (!files.Contains(current, StringComparer.OrdinalIgnoreCase))
+        {
+            files.Add(current);
+        }
+        if (listing.SortKey != SortKey || listing.SortDescending != SortDescending
+            || files.Count != listing.Files.Count)
+        {
+            Sort(files);
+        }
 
         _files = files;
-        _index = files.FindIndex(f => string.Equals(f, fullPath, StringComparison.OrdinalIgnoreCase));
-        _directory = directory;
+        _index = files.FindIndex(f => string.Equals(f, current, StringComparison.OrdinalIgnoreCase));
         return true;
     }
 
@@ -171,8 +233,10 @@ public sealed class FolderNavigator
     /// 今の並び順で並べる。昇順・降順を切り替えただけのときも、逆順にするのではなく並べ直す
     /// （主キーが同じものはいつも名前の昇順にしたいのと、更新日時・サイズを読み直したいので）。
     /// </summary>
-    private void Sort(List<string> files) =>
-        files.Sort(new FileSortComparer(files, SortKey, SortDescending));
+    private void Sort(List<string> files) => Sort(files, SortKey, SortDescending);
+
+    private static void Sort(List<string> files, FileSortKey key, bool descending) =>
+        files.Sort(new FileSortComparer(files, key, descending));
 
     /// <summary>フォルダ内の対応画像を列挙する（並べ替えはしない）</summary>
     private static List<string> EnumerateImages(string directory) =>

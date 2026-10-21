@@ -79,6 +79,12 @@ public partial class MainWindow : Window
     // 今の画像を出してからの時間（アニメーションを ini の時間まで繰り返すのに使う）
     private readonly Stopwatch _slideClock = new();
 
+    // ファイルを開いて、フォルダの一覧を裏で作っている間は true（その間は一覧が1枚だけなので、前後の移動などはしない）
+    private bool _listingPending;
+
+    // ファイル・フォルダを開くたびに増やす。古い一覧の結果を捨てるのに使う
+    private int _openVersion;
+
     // 隣のフォルダを探している・端のダイアログを出している間は true（重ねて動かさない）
     private bool _folderBusy;
 
@@ -187,12 +193,14 @@ public partial class MainWindow : Window
     /// <summary>ファイルまたはフォルダを開く</summary>
     public void OpenPath(string path)
     {
+        bool isDirectory = Directory.Exists(path);
         bool opened;
         try
         {
-            opened = Directory.Exists(path)
+            // ファイルは、まず1枚だけで開いてすぐ表示する。フォルダの一覧は裏で作る（LoadFolderListingAsync）
+            opened = isDirectory
                 ? _navigator.OpenDirectory(path)
-                : _navigator.OpenFile(path);
+                : _navigator.OpenSingleFile(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -209,6 +217,10 @@ public partial class MainWindow : Window
         // 別のものを開いたら、スライドショーは終わり
         StopSlideshow();
 
+        // 作りかけの一覧があれば、もう使わない
+        _openVersion++;
+        _listingPending = !isDirectory;
+
         // フォルダの移動は、開いたフォルダと同じ階層のフォルダ（とその中のサブフォルダ全部）をたどる
         _folderScopeRoot = _navigator.CurrentDirectory is { } openedFolder
             ? Path.GetDirectoryName(openedFolder) ?? openedFolder // ドライブのルートを開いたときは、その中だけ
@@ -220,7 +232,7 @@ public partial class MainWindow : Window
         _infoPath = null; // 情報も読み直す
         _direction = 1;
 
-        if (Directory.Exists(path))
+        if (isDirectory)
         {
             // フォルダは一覧から始める。前のフォルダの画像は片付けておく（一覧から戻ったときに出ないように）
             _loadVersion++;
@@ -235,8 +247,49 @@ public partial class MainWindow : Window
             {
                 LeaveThumbnailMode();
             }
+
+            // 画像のデコードを先に始めてから、一覧を作り始める
             _ = ShowCurrentAsync();
+            _ = LoadFolderListingAsync(_navigator.Current!, _openVersion);
         }
+    }
+
+    /// <summary>
+    /// 開いたファイルと同じフォルダの一覧を裏で作り、できたら入れ替える。
+    /// ファイル数の多いフォルダやネットワークドライブでも、画像の表示を待たせないため。
+    /// </summary>
+    private async Task LoadFolderListingAsync(string filePath, int version)
+    {
+        var key = _navigator.SortKey;
+        bool descending = _navigator.SortDescending;
+
+        FolderListing? listing = null;
+        try
+        {
+            listing = await Task.Run(() => FolderNavigator.ListFolderOf(filePath, key, descending));
+        }
+        catch (Exception ex)
+        {
+            // 投げっぱなしで呼んでいるので、ここで拾わないと誰にも見られずに消える。一覧は1枚だけのまま
+            Debug.WriteLine(ex);
+        }
+
+        if (version != _openVersion)
+        {
+            return; // 作っている間に、別のファイル・フォルダが開かれた
+        }
+
+        _listingPending = false;
+        if (listing is null || !_navigator.ApplyListing(listing))
+        {
+            ShowNotice("フォルダの画像一覧を作れませんでした");
+        }
+        else if (!_thumbnailMode && _navigator.Current is { } current)
+        {
+            UpdatePrefetch(current); // 一覧ができたので、前後の先読みを始める
+        }
+
+        UpdateStatus();
     }
 
     /// <param name="moved">位置が変わったか（FolderNavigator.MoveXxx の戻り値）</param>
@@ -371,7 +424,7 @@ public partial class MainWindow : Window
     /// <summary>サムネイル一覧を出す。選択は今の画像にして、そこまでスクロールする</summary>
     private void ShowThumbnails()
     {
-        if (_navigator.Count == 0) return;
+        if (_navigator.Count == 0 || _listingPending) return;
 
         StopSlideshow();
 
@@ -509,8 +562,8 @@ public partial class MainWindow : Window
 
     private void UpdateThumbnailButton()
     {
-        ThumbnailButton.IsEnabled = _navigator.Count > 0;
-        SlideshowButton.IsEnabled = _navigator.Count > 0;
+        ThumbnailButton.IsEnabled = _navigator.Count > 0 && !_listingPending;
+        SlideshowButton.IsEnabled = _navigator.Count > 0 && !_listingPending;
         ExplorerButton.IsEnabled = _navigator.Count > 0;
         ThumbnailIcon.Text = _thumbnailMode ? GlyphSingleImage : GlyphThumbnails;
         ThumbnailButton.ToolTip = _thumbnailMode
@@ -529,6 +582,9 @@ public partial class MainWindow : Window
     /// <param name="suppressDialog">端でもダイアログを出さない（キーの押しっぱなし・ホイールの回しすぎ）</param>
     private void GoNextOrAsk(int direction, bool suppressDialog)
     {
+        // 一覧ができるまでは1枚だけなので、ここで送るとフォルダの端と間違えてダイアログが出てしまう
+        if (_listingPending) return;
+
         bool moved = direction > 0 ? _navigator.MoveNext() : _navigator.MovePrevious();
         if (moved)
         {
@@ -650,6 +706,8 @@ public partial class MainWindow : Window
         }
 
         StopSlideshow();
+        _openVersion++;          // 開いたファイルの一覧を作っている途中なら、もう使わない
+        _listingPending = false; // OpenDirectory は一覧まで作り終えている
         _cache.Clear();
         _thumbnailCache?.Invalidate();
         _infoPath = null;
@@ -691,7 +749,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void StartSlideshow()
     {
-        if (_slideshow || _navigator.Count == 0) return;
+        if (_slideshow || _navigator.Count == 0 || _listingPending) return;
 
         _settings.SlideshowIntervalSeconds = AppSettings.Load(AppSettings.DefaultPath).SlideshowIntervalSeconds;
         _slideshow = true;
@@ -821,7 +879,7 @@ public partial class MainWindow : Window
 
     private void UpdateSlideshowUi()
     {
-        SlideshowButton.IsEnabled = _navigator.Count > 0;
+        SlideshowButton.IsEnabled = _navigator.Count > 0 && !_listingPending;
         SlideshowIcon.Text = _slideshow ? GlyphStop : GlyphPlay;
         SlideshowButton.ToolTip = _slideshow ? "スライドショーを止める (S / Esc)" : "スライドショー (S)";
 
@@ -1472,7 +1530,8 @@ public partial class MainWindow : Window
 
         FileNameText.Text = fileName;
         FileNameText.ToolTip = path;
-        IndexText.Text = $"{_navigator.Index + 1} / {_navigator.Count}";
+        // 一覧を作っている間は、何枚目かがまだ分からない
+        IndexText.Text = _listingPending ? "… / …" : $"{_navigator.Index + 1} / {_navigator.Count}";
 
         if (_thumbnailMode)
         {

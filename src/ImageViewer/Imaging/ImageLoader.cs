@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using ImageViewer.Navigation;
 
 namespace ImageViewer.Imaging;
 
@@ -58,8 +59,13 @@ public sealed class ImageLoader : IImageLoader
             }
         }
 
+        // HEIC・AVIF などは OS にコーデックが無いと読めない。原因が分かるように一言添える
+        var hint = FolderNavigator.CodecRequiredExtensions.Contains(Path.GetExtension(path))
+            ? "\nこの形式は、Microsoft Store の拡張機能（HEIF 画像拡張機能など）が入っていないと表示できません。"
+            : string.Empty;
+
         throw new ImageLoadException(
-            $"この画像は表示できません。\n{Path.GetFileName(path)}",
+            $"この画像は表示できません。\n{Path.GetFileName(path)}{hint}",
             new AggregateException(errors));
     }
 }

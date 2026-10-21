@@ -14,19 +14,33 @@ public sealed record FolderListing(string Directory, IReadOnlyList<string> Files
 /// </summary>
 public sealed class FolderNavigator
 {
-    /// <summary>フォルダ走査の対象にする拡張子</summary>
-    public static readonly IReadOnlySet<string> SupportedExtensions =
+    /// <summary>
+    /// OS にコーデック（Microsoft Store の拡張機能）が入っていれば WIC で読める拡張子。
+    /// 入っていないと読めないので、読めなかったときにその旨を出すのに使う。
+    /// </summary>
+    public static readonly IReadOnlySet<string> CodecRequiredExtensions =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ".jpg", ".jpeg", ".jpe", ".jfif",
-            ".png",
-            ".gif",
-            ".bmp", ".dib",
-            ".tif", ".tiff",
-            ".ico",
-            ".webp",
-            ".jxr", ".wdp",
+            ".heic", ".heif", ".hif",
+            ".avif",
+            ".jxl",
         };
+
+    /// <summary>フォルダ走査の対象にする拡張子</summary>
+    public static readonly IReadOnlySet<string> SupportedExtensions =
+        new HashSet<string>(
+            [
+                ".jpg", ".jpeg", ".jpe", ".jfif",
+                ".png",
+                ".gif",
+                ".bmp", ".dib",
+                ".tif", ".tiff",
+                ".ico",
+                ".webp",
+                ".jxr", ".wdp",
+                .. CodecRequiredExtensions,
+            ],
+            StringComparer.OrdinalIgnoreCase);
 
     private List<string> _files = [];
     private int _index = -1;

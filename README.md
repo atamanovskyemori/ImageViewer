@@ -118,6 +118,15 @@ vcpkg install libwebp:x64-windows
 
 `installed\x64-windows\bin\` にある上の3つを、まとめて `native/x64/` に上書きコピーして、コミットし直す。
 
+## HEIC / AVIF / JPEG XL
+
+`.heic` / `.heif` / `.hif` / `.avif` / `.jxl` もフォルダの一覧に入れて、WIC で読む。
+
+- OS にコーデック（Microsoft Store の「HEIF 画像拡張機能」「AV1 Video Extension」など）が入っていれば表示できる
+- 入っていなければ「表示できません」と出し、拡張機能が必要なことも添える（一覧では「×」）
+- EXIF の向きはコーデック側で反映される前提で、自分では回さない
+- 情報パネルは「ファイル」の欄だけ（EXIF を自前で読めないので）
+
 ## アニメーション（GIF / WebP）
 
 開いたら自動で再生する。

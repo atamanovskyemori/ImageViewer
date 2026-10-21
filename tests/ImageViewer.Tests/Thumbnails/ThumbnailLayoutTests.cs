@@ -119,7 +119,7 @@ namespace ImageViewer.Tests.Thumbnails
         {
             Assert.AreEqual(160 + ThumbnailLayout.ChromeWidth, ThumbnailLayout.TileWidth(160));
             Assert.AreEqual(160 + ThumbnailLayout.ChromeHeight, ThumbnailLayout.TileHeight(160));
-            Assert.IsTrue(ThumbnailLayout.ChromeHeight > ThumbnailLayout.ChromeWidth, "Height includes the file name");
+            Assert.IsTrue(ThumbnailLayout.TileHeight(160) > ThumbnailLayout.TileWidth(160), "Height includes the file name");
         }
     }
 }

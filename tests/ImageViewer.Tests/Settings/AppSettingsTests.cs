@@ -258,5 +258,33 @@ namespace ImageViewer.Tests.Settings
 
             Assert.IsFalse(AppSettings.FromIni(ini).Window!.Maximized);
         }
+
+        [TestMethod]
+        public void SingleInstance_Defaults_To_True_And_Is_Always_Written()
+        {
+            var settings = AppSettings.FromIni(new IniFile());
+
+            Assert.IsTrue(settings.SingleInstance);
+            Assert.AreEqual("true", settings.ToIni().Get("Startup", "SingleInstance"));
+        }
+
+        [TestMethod]
+        [DataRow("false")]
+        [DataRow("0")]
+        public void SingleInstance_Can_Be_Turned_Off(string value)
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse($"[Startup]\nSingleInstance={value}\n"));
+
+            Assert.IsFalse(settings.SingleInstance);
+            Assert.AreEqual("false", settings.ToIni().Get("Startup", "SingleInstance"));
+        }
+
+        [TestMethod]
+        public void Broken_SingleInstance_Falls_Back_To_True()
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse("[Startup]\nSingleInstance=maybe\n"));
+
+            Assert.IsTrue(settings.SingleInstance);
+        }
     }
 }

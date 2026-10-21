@@ -106,6 +106,10 @@ public partial class MainWindow : Window
     // 端のダイアログを閉じてからの時間。ホイールを回し続けたときに、閉じた直後にまた出ないようにする
     private readonly Stopwatch _sinceEdgeDialog = new();
 
+    // ほかの起動から渡されたパス。ダイアログを出している間に来たら、閉じるのを待ってから開く
+    private string? _pendingOpenPath;
+    private readonly DispatcherTimer _pendingOpenTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+
     // 画面下のお知らせを消すタイマー
     private readonly DispatcherTimer _noticeTimer = new() { Interval = TimeSpan.FromSeconds(2.5) };
 
@@ -150,6 +154,7 @@ public partial class MainWindow : Window
         _player.PlayCompleted += AnimationPlayer_PlayCompleted;
         _slideTimer.Tick += SlideTimer_Tick;
         _folderWatcher.Changed += FolderWatcher_Changed;
+        _pendingOpenTimer.Tick += PendingOpenTimer_Tick;
         _noticeTimer.Tick += (_, _) =>
         {
             _noticeTimer.Stop();
@@ -376,6 +381,51 @@ public partial class MainWindow : Window
         }
 
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// 2回目以降の起動（ファイルの関連付けなど）から渡されたパスを開いて、ウィンドウを前に出す。
+    /// ダイアログを出している間に来たら、閉じてから開く（ダイアログの答えと食い違わないように）。
+    /// </summary>
+    /// <param name="path">開くパス。null なら前に出すだけ</param>
+    public void OpenFromAnotherLaunch(string? path)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (WindowState == WindowState.Minimized)
+        {
+            User32.ShowWindow(hwnd, User32.SW_RESTORE); // 最大化していたなら最大化に戻る
+        }
+        Activate();
+
+        if (path is null) return;
+
+        _pendingOpenPath = path; // 続けて来たら、最後のものだけ開く
+        if (User32.IsWindowEnabled(hwnd))
+        {
+            OpenPendingPath();
+        }
+        else
+        {
+            _pendingOpenTimer.Start();
+        }
+    }
+
+    private void PendingOpenTimer_Tick(object? sender, EventArgs e)
+    {
+        if (User32.IsWindowEnabled(new WindowInteropHelper(this).Handle))
+        {
+            OpenPendingPath();
+        }
+    }
+
+    private void OpenPendingPath()
+    {
+        _pendingOpenTimer.Stop();
+        if (_pendingOpenPath is { } path)
+        {
+            _pendingOpenPath = null;
+            OpenPath(path);
+        }
     }
 
     /// <param name="moved">位置が変わったか（FolderNavigator.MoveXxx の戻り値）</param>
@@ -1555,6 +1605,7 @@ public partial class MainWindow : Window
         _settings.PrefetchMaxMemoryMB = onDisk.PrefetchMaxMemoryMB;
         _settings.ThumbnailMaxMemoryMB = onDisk.ThumbnailMaxMemoryMB;
         _settings.SlideshowIntervalSeconds = onDisk.SlideshowIntervalSeconds;
+        _settings.SingleInstance = onDisk.SingleInstance;
 
         var hwnd = new WindowInteropHelper(this).Handle;
         var placement = User32.WINDOWPLACEMENT.Create();

@@ -29,6 +29,7 @@ public sealed class AppSettings
     private const string ThumbnailSection = "Thumbnail";
     private const string SlideshowSection = "Slideshow";
     private const string InfoPanelSection = "InfoPanel";
+    private const string StartupSection = "Startup";
 
     /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
     public const int DefaultAnimationMaxMemoryMB = 256;
@@ -82,6 +83,12 @@ public sealed class AppSettings
 
     /// <summary>情報パネルの幅（DIP）。境目をドラッグして変えたものを保存する</summary>
     public int InfoPanelWidth { get; set; } = DefaultInfoPanelWidth;
+
+    /// <summary>
+    /// 起動を1つにまとめるか。true なら、2回目以降の起動は起動中のウィンドウで開く。
+    /// 2つのウィンドウで見比べたいときは false にする。ini を手で編集して変える（次の起動から効く）。
+    /// </summary>
+    public bool SingleInstance { get; set; } = true;
 
     /// <summary>情報パネルの幅を、受け付ける範囲に収める</summary>
     public static int ClampInfoPanelWidth(int width) => Math.Clamp(width, MinInfoPanelWidth, MaxInfoPanelWidth);
@@ -187,6 +194,11 @@ public sealed class AppSettings
             settings.InfoPanelWidth = ClampInfoPanelWidth(infoWidth);
         }
 
+        if (TryGetBool(ini, StartupSection, "SingleInstance", out bool singleInstance))
+        {
+            settings.SingleInstance = singleInstance;
+        }
+
         // 選べる大きさ以外の値（手で書いた 150 など）は、一番近い大きさにする
         if (TryGetInt(ini, ThumbnailSection, "Size", out int thumbnailSize))
         {
@@ -222,6 +234,9 @@ public sealed class AppSettings
         ini.Set(SlideshowSection, "IntervalSeconds", SlideshowIntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
 
         ini.Set(InfoPanelSection, "Width", Format(ClampInfoPanelWidth(InfoPanelWidth)));
+
+        // 手で編集できるように、既定値のままでも必ず書き出す
+        ini.Set(StartupSection, "SingleInstance", Format(SingleInstance));
 
         return ini;
     }

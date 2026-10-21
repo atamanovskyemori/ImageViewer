@@ -3,7 +3,7 @@
 namespace ImageViewer.Interop;
 
 /// <summary>
-/// ウィンドウ位置の保存・復元と、モニタの大きさの取得に使う user32.dll の P/Invoke 定義。
+/// ウィンドウ位置の保存・復元、モニタの大きさの取得、2回目の起動でのウィンドウの呼び出しに使う user32.dll の P/Invoke 定義。
 /// GetWindowPlacement / SetWindowPlacement を使うと、
 /// ・最大化中でも「元に戻したときの位置とサイズ」が取れる
 /// ・保存した位置が画面外（モニタを外した等）でも、OS が画面内に収めてくれる
@@ -82,4 +82,25 @@ internal static class User32
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    // ------------------------------------------------------------
+    // 2回目の起動から、起動中のウィンドウを前に出す
+    // ------------------------------------------------------------
+
+    /// <summary>最小化・最大化を元に戻す（最大化中に最小化していたら、最大化に戻る）</summary>
+    public const int SW_RESTORE = 9;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    /// <summary>指定したプロセスが、ウィンドウを前に出せるようにする（呼べるのは、今前に出ている側だけ）</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AllowSetForegroundWindow(uint dwProcessId);
+
+    /// <summary>ウィンドウが操作できるか（ダイアログを出している間は false）</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowEnabled(IntPtr hWnd);
 }

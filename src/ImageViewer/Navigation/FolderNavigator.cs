@@ -167,25 +167,12 @@ public sealed class FolderNavigator
         return true;
     }
 
-    // キャッシュして「昇順/降順切り替え」のみの場合は再ソートを避ける
-    private object _lastSortKey;
-    private bool _lastSortDescending;
-
-    private void Sort(List<string> files)
-    {
-        // 同じソートキーで昇順/降順だけ切り替わった場合は全再ソートを避けて反転する
-        if (_lastSortKey != null && Equals(_lastSortKey, SortKey) && _lastSortDescending != SortDescending)
-        {
-            files.Reverse();
-            _lastSortDescending = SortDescending;
-            return;
-        }
-
+    /// <summary>
+    /// 今の並び順で並べる。昇順・降順を切り替えただけのときも、逆順にするのではなく並べ直す
+    /// （主キーが同じものはいつも名前の昇順にしたいのと、更新日時・サイズを読み直したいので）。
+    /// </summary>
+    private void Sort(List<string> files) =>
         files.Sort(new FileSortComparer(files, SortKey, SortDescending));
-
-        _lastSortKey = SortKey;
-        _lastSortDescending = SortDescending;
-    }
 
     /// <summary>フォルダ内の対応画像を列挙する（並べ替えはしない）</summary>
     private static List<string> EnumerateImages(string directory) =>

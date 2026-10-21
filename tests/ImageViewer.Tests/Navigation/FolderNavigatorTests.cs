@@ -102,6 +102,33 @@ namespace ImageViewer.Tests.Navigation
         }
 
         [TestMethod]
+        public void Size_Sort_Treats_Missing_File_As_Smallest()
+        {
+            var a = CreateFile("a.jpg", 5);
+            var b = CreateFile("b.jpg", 1);
+            var gone = Path.Combine(_root, "gone.jpg");
+
+            var files = new List<string> { a, gone, b };
+            files.Sort(new FileSortComparer(files, FileSortKey.Size, descending: false));
+            CollectionAssert.AreEqual(new[] { gone, b, a }, files);
+        }
+
+        [TestMethod]
+        public void Size_Sort_Reads_Files_From_Several_Folders()
+        {
+            var sub = Path.Combine(_root, "sub");
+            Directory.CreateDirectory(sub);
+            var a = CreateFile("a.jpg", 3);
+            var x = Path.Combine(sub, "x.jpg");
+            File.WriteAllBytes(x, new byte[2]);
+            var missingFolderFile = Path.Combine(_root, "missing", "y.jpg");
+
+            var files = new List<string> { a, missingFolderFile, x };
+            files.Sort(new FileSortComparer(files, FileSortKey.Size, descending: true));
+            CollectionAssert.AreEqual(new[] { a, x, missingFolderFile }, files);
+        }
+
+        [TestMethod]
         public void OpenSingleFile_Does_Not_List_The_Folder()
         {
             var b = CreateFile("b.jpg", 1);

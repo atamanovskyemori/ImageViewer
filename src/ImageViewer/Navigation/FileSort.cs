@@ -17,7 +17,7 @@ public enum FileSortKey
 
 /// <summary>
 /// 並び順に従ってファイルパスを比較する。
-/// 日時・サイズは比較のたびにディスクを見に行かないよう、作成時にまとめて取得しておく。
+/// 日時・サイズは比較のたびにディスクを見に行かないよう、作成時にまとめて取得しておく（フォルダごとに1回の列挙で）。
 /// 主キーが同じときは、名前（自然順・昇順）で並べる。
 /// </summary>
 public sealed class FileSortComparer : IComparer<string>
@@ -30,14 +30,49 @@ public sealed class FileSortComparer : IComparer<string>
     {
         _key = key;
         _descending = descending;
-        _info = new(StringComparer.OrdinalIgnoreCase);
-        if (key != FileSortKey.Name)
+        _info = key != FileSortKey.Name ? ReadInfo(paths) : new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 日時・サイズをまとめて取る。ファイルごとに問い合わせると、ネットワークドライブでは1つずつ往復して遅いので、
+    /// フォルダごとに1回だけ列挙して、列挙で一緒に返ってくる日時・サイズをそのまま使う。
+    /// 列挙で見つからなかったもの（列挙した後に消された・フォルダが読めない）だけ、1つずつ取りに行く。
+    /// </summary>
+    private static Dictionary<string, (DateTime LastWriteTime, long Size)> ReadInfo(IEnumerable<string> paths)
+    {
+        var wanted = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+        var info = new Dictionary<string, (DateTime LastWriteTime, long Size)>(StringComparer.OrdinalIgnoreCase);
+
+        var directories = wanted
+            .Select(Path.GetDirectoryName)
+            .OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in directories)
         {
-            foreach (var path in paths)
+            try
             {
-                _info[path] = GetInfo(path);
+                foreach (var file in new DirectoryInfo(directory).EnumerateFiles())
+                {
+                    if (wanted.Contains(file.FullName))
+                    {
+                        info[file.FullName] = (file.LastWriteTimeUtc, file.Length);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 下で1つずつ取りに行く
             }
         }
+
+        foreach (var path in wanted)
+        {
+            if (!info.ContainsKey(path))
+            {
+                info[path] = GetInfo(path);
+            }
+        }
+        return info;
     }
 
     public int Compare(string? x, string? y)

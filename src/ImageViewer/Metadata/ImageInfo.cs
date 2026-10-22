@@ -70,6 +70,10 @@ public static class ImageInfoBuilder
         ["Version"] = "バージョン",
         ["Guidance"] = "ガイダンス",
         ["LoRA"] = "LoRA",
+        ["Hires resize"] = "高解像度化の大きさ",
+        ["Hires denoising strength"] = "高解像度化のノイズ除去の強さ",
+        ["Hires sampler"] = "高解像度化のサンプラー",
+        ["Hires CFG scale"] = "高解像度化の CFG スケール",
     };
 
     /// <param name="generation">生成AIの生成情報。無ければ null</param>

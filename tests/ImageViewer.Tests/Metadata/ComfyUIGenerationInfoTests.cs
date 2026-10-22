@@ -90,6 +90,196 @@ namespace ImageViewer.Tests.Metadata
         }
 
         [TestMethod]
+        public void Hires_Fix_Second_Pass_Settings_Are_Shown()
+        {
+            // Same graph as above: latent upscale x1.5, then a second KSampler with other sampler / cfg
+            var info = Parse("""
+                {
+                  "1": {"class_type": "KSampler", "inputs": {"seed": 2, "steps": 15, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 0.5,
+                                                              "model": ["9", 0], "positive": ["7", 0], "negative": ["8", 0], "latent_image": ["2", 0]}},
+                  "2": {"class_type": "LatentUpscaleBy", "inputs": {"upscale_method": "nearest-exact", "scale_by": 1.5, "samples": ["3", 0]}},
+                  "3": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 30, "cfg": 6, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                                                              "model": ["9", 0], "positive": ["7", 0], "negative": ["8", 0], "latent_image": ["4", 0]}},
+                  "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 832, "height": 1216, "batch_size": 1}},
+                  "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "portrait", "clip": ["9", 1]}},
+                  "8": {"class_type": "CLIPTextEncode", "inputs": {"text": "bad hands", "clip": ["9", 1]}},
+                  "9": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}}
+                }
+                """);
+
+            Assert.AreEqual("1.5", info.Get("Hires upscale"));
+            Assert.AreEqual("nearest-exact", info.Get("Hires upscaler"));
+            Assert.AreEqual("15", info.Get("Hires steps"));
+            Assert.AreEqual("0.5", info.Get("Hires denoising strength"));
+            Assert.AreEqual("dpmpp_2m", info.Get("Hires sampler"));
+            Assert.AreEqual("7", info.Get("Hires CFG scale"));
+            Assert.IsNull(info.Get("Hires resize"));
+        }
+
+        [TestMethod]
+        public void Hires_Fix_With_An_Upscale_Model_Shows_The_Model_But_No_Scale()
+        {
+            var info = Parse("""
+                {
+                  "3": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 25, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                                                              "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
+                  "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}},
+                  "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 768, "batch_size": 1}},
+                  "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "castle", "clip": ["4", 1]}},
+                  "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "lowres", "clip": ["4", 1]}},
+                  "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+                  "10": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "4x-UltraSharp.pth"}},
+                  "11": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["10", 0], "image": ["8", 0]}},
+                  "12": {"class_type": "ImageScaleBy", "inputs": {"upscale_method": "lanczos", "scale_by": 0.5, "image": ["11", 0]}},
+                  "13": {"class_type": "VAEEncode", "inputs": {"pixels": ["12", 0], "vae": ["4", 2]}},
+                  "14": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 12, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 0.4,
+                                                               "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["13", 0]}}
+                }
+                """);
+
+            Assert.AreEqual("25", info.Get("Steps"));
+            Assert.AreEqual("512x768", info.Get("Size"));
+            Assert.AreEqual("4x-UltraSharp.pth", info.Get("Hires upscaler"));
+            Assert.IsNull(info.Get("Hires upscale"), "the real factor is 4 x 0.5, which the JSON does not tell");
+            Assert.AreEqual("12", info.Get("Hires steps"));
+            Assert.AreEqual("0.4", info.Get("Hires denoising strength"));
+            Assert.IsNull(info.Get("Hires sampler"), "same as the first pass");
+            Assert.IsNull(info.Get("Hires CFG scale"), "same as the first pass");
+        }
+
+        [TestMethod]
+        public void No_Hires_Settings_For_A_Single_Pass()
+        {
+            var info = Parse(DefaultWorkflow);
+
+            Assert.IsFalse(info.Parameters.Any(p => p.Key.StartsWith("Hires", StringComparison.Ordinal)));
+        }
+
+        [TestMethod]
+        public void Efficiency_Nodes_Are_Read()
+        {
+            // Efficient Loader writes the prompts and the empty latent size itself; outputs are
+            // 0 MODEL, 1 CONDITIONING+, 2 CONDITIONING-, 3 LATENT. The hires sampler has the smaller id.
+            var info = Parse("""
+                {
+                  "2": {"class_type": "KSampler (Efficient)", "inputs": {"seed": 9, "steps": 10, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 0.45,
+                        "preview_method": "auto", "vae_decode": "true", "model": ["5", 0], "positive": ["5", 1], "negative": ["5", 2], "latent_image": ["3", 0]}},
+                  "3": {"class_type": "LatentUpscaleBy", "inputs": {"upscale_method": "bislerp", "scale_by": 2, "samples": ["4", 3]}},
+                  "4": {"class_type": "KSampler (Efficient)", "inputs": {"seed": 9, "steps": 28, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                        "preview_method": "auto", "vae_decode": "true", "model": ["5", 0], "positive": ["5", 1], "negative": ["5", 2], "latent_image": ["5", 3]}},
+                  "5": {"class_type": "Efficient Loader", "inputs": {"ckpt_name": "anime.safetensors", "vae_name": "Baked VAE", "clip_skip": -2,
+                        "lora_name": "style.safetensors", "lora_model_strength": 0.7, "lora_clip_strength": 0.7,
+                        "positive": "1girl, smile", "negative": "worst quality", "token_normalization": "none", "weight_interpretation": "comfy",
+                        "empty_latent_width": 768, "empty_latent_height": 1152, "batch_size": 1}}
+                }
+                """);
+
+            Assert.AreEqual("1girl, smile", info.Prompt);
+            Assert.AreEqual("worst quality", info.NegativePrompt);
+            Assert.AreEqual("28", info.Get("Steps"), "the first pass, even though it has the larger id");
+            Assert.AreEqual("768x1152", info.Get("Size"));
+            Assert.AreEqual("anime.safetensors", info.Get("Model"));
+            Assert.AreEqual("style.safetensors (0.7)", info.Get("LoRA"));
+            Assert.AreEqual("2", info.Get("Hires upscale"));
+            Assert.AreEqual("10", info.Get("Hires steps"));
+            Assert.AreEqual("0.45", info.Get("Hires denoising strength"));
+        }
+
+        [TestMethod]
+        public void Efficient_Loader_Without_Lora_Shows_No_Lora()
+        {
+            var info = Parse("""
+                {
+                  "1": {"class_type": "KSampler (Efficient)", "inputs": {"seed": 1, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                        "model": ["2", 0], "positive": ["2", 1], "negative": ["2", 2], "latent_image": ["2", 3]}},
+                  "2": {"class_type": "Efficient Loader", "inputs": {"ckpt_name": "m.safetensors", "lora_name": "None", "lora_model_strength": 1,
+                        "positive": "p", "negative": "n", "empty_latent_width": 512, "empty_latent_height": 512}}
+                }
+                """);
+
+            Assert.IsNull(info.Get("LoRA"));
+        }
+
+        [TestMethod]
+        public void Rgthree_Lora_Loaders_Are_Read()
+        {
+            var info = Parse("""
+                {
+                  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "base.safetensors"}},
+                  "2": {"class_type": "Lora Loader Stack (rgthree)", "inputs": {"model": ["1", 0], "clip": ["1", 1],
+                        "lora_01": "a.safetensors", "strength_01": 1, "lora_02": "None", "strength_02": 1, "lora_03": "b.safetensors", "strength_03": 0.5}},
+                  "3": {"class_type": "Power Lora Loader (rgthree)", "inputs": {"model": ["2", 0], "clip": ["2", 1],
+                        "PowerLoraLoaderHeaderWidget": {"type": "PowerLoraLoaderHeaderWidget"},
+                        "lora_1": {"on": true, "lora": "c.safetensors", "strength": 0.8},
+                        "lora_2": {"on": false, "lora": "off.safetensors", "strength": 1},
+                        "➕ Add Lora": ""}},
+                  "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "p", "clip": ["3", 1]}},
+                  "5": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                                                              "model": ["3", 0], "positive": ["4", 0], "negative": ["4", 0], "latent_image": ["6", 0]}},
+                  "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}}
+                }
+                """);
+
+            Assert.AreEqual("a.safetensors (1), b.safetensors (0.5), c.safetensors (0.8)", info.Get("LoRA"));
+        }
+
+        [TestMethod]
+        public void Flux_Text_Encoder_Gives_Prompt_And_Guidance()
+        {
+            var info = Parse("""
+                {
+                  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux.safetensors", "weight_dtype": "default"}},
+                  "2": {"class_type": "CLIPTextEncodeFlux", "inputs": {"clip_l": "a lighthouse at dusk", "t5xxl": "a lighthouse at dusk", "guidance": 3.5, "clip": ["9", 0]}},
+                  "3": {"class_type": "KSampler", "inputs": {"seed": 7, "steps": 20, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1,
+                                                              "model": ["1", 0], "positive": ["2", 0], "negative": ["2", 0], "latent_image": ["4", 0]}},
+                  "4": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}}
+                }
+                """);
+
+            Assert.AreEqual("a lighthouse at dusk", info.Prompt);
+            Assert.AreEqual("3.5", info.Get("Guidance"));
+        }
+
+        [TestMethod]
+        public void Sdxl_Prompt_Styler_Outputs_Are_Followed()
+        {
+            var info = Parse("""
+                {
+                  "1": {"class_type": "SDXLPromptStyler", "inputs": {"text_positive": "a dog", "text_negative": "ugly", "style": "base", "log_prompt": false}},
+                  "2": {"class_type": "CLIPTextEncode", "inputs": {"text": ["1", 0], "clip": ["5", 1]}},
+                  "3": {"class_type": "CLIPTextEncode", "inputs": {"text": ["1", 1], "clip": ["5", 1]}},
+                  "4": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                                                              "model": ["5", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["6", 0]}},
+                  "5": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}},
+                  "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}}
+                }
+                """);
+
+            Assert.AreEqual("a dog", info.Prompt);
+            Assert.AreEqual("ugly", info.NegativePrompt);
+        }
+
+        [TestMethod]
+        public void Impact_Wildcards_Show_The_Expanded_Prompt()
+        {
+            var info = Parse("""
+                {
+                  "1": {"class_type": "ImpactWildcardProcessor", "inputs": {"wildcard_text": "a {cat|dog}", "populated_text": "a dog", "mode": "populate", "seed": 555}},
+                  "2": {"class_type": "CLIPTextEncode", "inputs": {"text": ["1", 0], "clip": ["5", 1]}},
+                  "3": {"class_type": "ImpactWildcardEncode", "inputs": {"wildcard_text": "{blurry|noisy}", "populated_text": "noisy", "mode": "populate", "seed": 1,
+                                                                         "model": ["5", 0], "clip": ["5", 1]}},
+                  "4": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+                                                              "model": ["5", 0], "positive": ["2", 0], "negative": ["3", 1], "latent_image": ["6", 0]}},
+                  "5": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}},
+                  "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}}
+                }
+                """);
+
+            Assert.AreEqual("a dog", info.Prompt, "the expanded text, not the seed or the raw wildcard");
+            Assert.AreEqual("noisy", info.NegativePrompt);
+        }
+
+        [TestMethod]
         public void Img2Img_Shows_Denoising_Strength()
         {
             var info = Parse(DefaultWorkflow.Replace("\"denoise\": 1", "\"denoise\": 0.6"));

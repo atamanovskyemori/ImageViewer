@@ -271,8 +271,15 @@ Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に
   - model の先のチェックポイント（UNETLoader も）がモデル、途中の LoraLoader が LoRA（「名前 (強さ)」をチェックポイントの側から順に）
   - latent_image の先の EmptyLatentImage などがサイズ。ステップ数・サンプラー・スケジューラ・CFG スケール・シードはサンプラーのノードから（SamplerCustomAdvanced は RandomNoise・KSamplerSelect・BasicScheduler・CFGGuider などから）。Flux の FluxGuidance はガイダンスとして出す
   - ノイズ除去の強さは 1 より小さいとき（img2img など）だけ出す
-  - サンプラーが複数ある（高解像度化など）ときは、空の潜在画像から始めているもの（最初のパス）を出す
-  - カスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
+  - サンプラーが複数ある（高解像度化など）ときは、ほかのサンプラーの出力を受けていないもの（最初のパス）を出す
+  - 高解像度化（最初のパスの出力を、拡大などを挟んで受けているサンプラー）があれば、その設定も出す：倍率（LatentUpscaleBy / ImageScaleBy）・大きさ（LatentUpscale / ImageScale）・拡大方法（拡大モデルの名前か upscale_method）・ステップ数・ノイズ除去の強さ。サンプラーと CFG スケールは、最初のパスと違うときだけ出す
+    - 拡大モデル（ImageUpscaleWithModel）を使っているときは、倍率は出さない（本当の倍率はモデルの倍率×ImageScaleBy の倍率で、モデルの倍率は JSON から分からないので）
+  - よく使われるカスタムノードも読む
+    - Efficiency Nodes：KSampler (Efficient) / KSampler Adv. (Efficient)、Efficient Loader（プロンプト・モデル・LoRA・大きさを自分で持っている）
+    - rgthree：Power Lora Loader（オフの LoRA は出さない）、Lora Loader Stack、Seed
+    - CLIPTextEncodeFlux（プロンプトとガイダンス）、SDXL Prompt Styler（スタイルを当てる前の文字列）
+    - Impact Pack の ImpactWildcardProcessor / ImpactWildcardEncode（ワイルドカードを展開した後の文字列）
+  - ほかのカスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
 - PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
 - EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク）。HEIC などは「ファイル」の欄だけ

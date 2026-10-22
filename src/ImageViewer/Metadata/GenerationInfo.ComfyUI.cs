@@ -52,8 +52,29 @@ public sealed partial class GenerationInfo
     /// <summary>ノード構成を読む。JsonDocument が生きている間だけ使う</summary>
     private sealed class ComfyGraph
     {
+        // KSampler (Efficient) などは、入力が KSampler と同じ
         private static readonly string[] SamplerTypes =
-            ["KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced"];
+        [
+            "KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced",
+            "KSampler (Efficient)", "KSampler Adv. (Efficient)",
+        ];
+
+        // 高解像度化のパスをたどるとき（後のサンプラーの latent_image から前のサンプラーまで）に、たどる入力
+        // （LatentUpscaleBy の samples、VAEDecode → ImageUpscaleWithModel → VAEEncode の samples / image / pixels など）
+        private static readonly string[] ImageChainInputs = ["samples", "latent", "latent_image", "pixels", "image", "images"];
+
+        // 文字列や数値を出すノードの、値の入力の名前（上から順に探す）。
+        // ImpactWildcardProcessor のように文字列とシードを両方持つノードで、シードをプロンプトと取り違えないように
+        private static readonly string[] ValueInputs =
+            ["populated_text", "value", "string", "text", "seed", "noise_seed", "int", "float", "number"];
+
+        // プロンプトの文字列が入っている入力の名前（CLIPTextEncode / SDXL / Flux / ImpactWildcardEncode など）
+        private static readonly string[] PromptInputs = ["text", "text_g", "text_l", "t5xxl", "clip_l", "prompt"];
+
+        /// <summary>サンプラーのノードから読んだ設定と、つながりの入口</summary>
+        private sealed record SamplerSettings(
+            string? Seed, string? Steps, string? Cfg, string? Sampler, string? Scheduler, string? Denoise,
+            JsonElement Positive, JsonElement Negative, JsonElement Model, JsonElement LatentImage);
 
         private readonly Dictionary<string, JsonElement> _nodes = new(StringComparer.Ordinal);
 
@@ -80,83 +101,192 @@ public sealed partial class GenerationInfo
                 return null;
             }
 
-            // 高解像度化などで複数あるときは、空の潜在画像から始めているもの（最初のパス）を主にする
-            var main = samplers.FirstOrDefault(s => StartsFromEmptyLatent(s.Value)).Value;
-            if (main.ValueKind == JsonValueKind.Undefined)
+            // 高解像度化などで複数あるときは、ほかのサンプラーの出力を受けていないもの（最初のパス）を主にする。
+            // そういうものが複数あれば（別々に生成している構成など）、空の潜在画像から始めているもの、次に番号の小さいもの
+            var firstPasses = samplers
+                .Where(s => !samplers.Any(other => other.Key != s.Key && PathTo(Input(Inputs(s.Value), "latent_image"), other.Key) is not null))
+                .ToList();
+            if (firstPasses.Count == 0)
             {
-                main = samplers[0].Value;
+                firstPasses = samplers; // ループしている。番号の小さいものにする
+            }
+            var main = firstPasses.FirstOrDefault(s => StartsFromEmptyLatent(s.Value));
+            if (main.Value.ValueKind == JsonValueKind.Undefined)
+            {
+                main = firstPasses[0];
             }
 
-            return ReadSampler(main, raw);
+            // 高解像度化：主のサンプラーの出力を（拡大などを挟んで）受けているサンプラー。いちばん近いもの
+            var hires = samplers
+                .Where(s => s.Key != main.Key)
+                .Select(s => (Sampler: s.Value, Path: PathTo(Input(Inputs(s.Value), "latent_image"), main.Key)))
+                .Where(h => h.Path is not null)
+                .OrderBy(h => h.Path!.Count)
+                .FirstOrDefault();
+
+            return Build(ReadSettings(main.Value), hires.Path is null ? null : (ReadSettings(hires.Sampler), hires.Path), raw);
         }
 
-        private GenerationInfo ReadSampler(JsonElement sampler, string raw)
+        /// <summary>サンプラーのノードから設定を読む。サンプラーの種類で、どの入力に何があるかが違う</summary>
+        private SamplerSettings ReadSettings(JsonElement sampler)
         {
             var inputs = Inputs(sampler);
-            string type = ClassType(sampler) ?? string.Empty;
+            var latent = Input(inputs, "latent_image");
 
-            string? seed, steps, cfg, samplerName, scheduler, denoise;
-            JsonElement positive, negative, model;
+            switch (ClassType(sampler))
+            {
+                case "SamplerCustomAdvanced":
+                {
+                    // noise / guider / sampler / sigmas が、それぞれ別のノードになっている（Flux など）
+                    var guiderInputs = Inputs(LinkedNode(Input(inputs, "guider")));
+                    var positive = Input(guiderInputs, "positive") is { ValueKind: not JsonValueKind.Undefined } p
+                        ? p
+                        : Input(guiderInputs, "conditioning");
+                    var (samplerName, scheduler, steps, denoise) = ReadSamplerAndSigmas(inputs);
+                    return new SamplerSettings(
+                        Scalar(Input(Inputs(LinkedNode(Input(inputs, "noise"))), "noise_seed")),
+                        steps, Scalar(Input(guiderInputs, "cfg")), samplerName, scheduler, denoise,
+                        positive, Input(guiderInputs, "negative"), Input(guiderInputs, "model"), latent);
+                }
 
-            if (type == "SamplerCustomAdvanced")
-            {
-                // noise / guider / sampler / sigmas が、それぞれ別のノードになっている（Flux など）
-                var noise = LinkedNode(Input(inputs, "noise"));
-                var guider = LinkedNode(Input(inputs, "guider"));
-                var guiderInputs = Inputs(guider);
-                seed = Scalar(Input(Inputs(noise), "noise_seed"));
-                cfg = Scalar(Input(guiderInputs, "cfg"));
-                positive = Input(guiderInputs, "positive") is { ValueKind: not JsonValueKind.Undefined } p ? p : Input(guiderInputs, "conditioning");
-                negative = Input(guiderInputs, "negative");
-                model = Input(guiderInputs, "model");
-                (samplerName, scheduler, steps, denoise) = ReadSamplerAndSigmas(inputs);
-            }
-            else if (type == "SamplerCustom")
-            {
-                seed = Scalar(Input(inputs, "noise_seed"));
-                cfg = Scalar(Input(inputs, "cfg"));
-                positive = Input(inputs, "positive");
-                negative = Input(inputs, "negative");
-                model = Input(inputs, "model");
-                (samplerName, scheduler, steps, denoise) = ReadSamplerAndSigmas(inputs);
-            }
-            else
-            {
-                // KSampler / KSamplerAdvanced
-                seed = Scalar(Input(inputs, "seed")) ?? Scalar(Input(inputs, "noise_seed"));
-                steps = Scalar(Input(inputs, "steps"));
-                cfg = Scalar(Input(inputs, "cfg"));
-                samplerName = Scalar(Input(inputs, "sampler_name"));
-                scheduler = Scalar(Input(inputs, "scheduler"));
-                denoise = Scalar(Input(inputs, "denoise"));
-                positive = Input(inputs, "positive");
-                negative = Input(inputs, "negative");
-                model = Input(inputs, "model");
-            }
+                case "SamplerCustom":
+                {
+                    var (samplerName, scheduler, steps, denoise) = ReadSamplerAndSigmas(inputs);
+                    return new SamplerSettings(
+                        Scalar(Input(inputs, "noise_seed")), steps, Scalar(Input(inputs, "cfg")), samplerName, scheduler, denoise,
+                        Input(inputs, "positive"), Input(inputs, "negative"), Input(inputs, "model"), latent);
+                }
 
+                default:
+                    // KSampler / KSamplerAdvanced / KSampler (Efficient) など
+                    return new SamplerSettings(
+                        Scalar(Input(inputs, "seed")) ?? Scalar(Input(inputs, "noise_seed")),
+                        Scalar(Input(inputs, "steps")),
+                        Scalar(Input(inputs, "cfg")),
+                        Scalar(Input(inputs, "sampler_name")),
+                        Scalar(Input(inputs, "scheduler")),
+                        Scalar(Input(inputs, "denoise")),
+                        Input(inputs, "positive"), Input(inputs, "negative"), Input(inputs, "model"), latent);
+            }
+        }
+
+        private GenerationInfo Build(SamplerSettings main, (SamplerSettings Settings, List<JsonElement> Path)? hires, string raw)
+        {
             var guidance = new List<string>();
-            var prompt = CollectTexts(positive, guidance);
-            var negativePrompt = CollectTexts(negative, null);
-            var (modelName, loras) = FollowModel(model);
+            var prompt = CollectTexts(main.Positive, guidance);
+            var negativePrompt = CollectTexts(main.Negative, null);
+            var (modelName, loras) = FollowModel(main.Model);
 
             var parameters = new List<KeyValuePair<string, string>>();
-            AddParameter(parameters, "Steps", steps);
-            AddParameter(parameters, "Sampler", samplerName);
-            AddParameter(parameters, "Schedule type", scheduler);
-            AddParameter(parameters, "CFG scale", cfg);
+            AddParameter(parameters, "Steps", main.Steps);
+            AddParameter(parameters, "Sampler", main.Sampler);
+            AddParameter(parameters, "Schedule type", main.Scheduler);
+            AddParameter(parameters, "CFG scale", main.Cfg);
             AddParameter(parameters, "Guidance", guidance.FirstOrDefault());
-            AddParameter(parameters, "Seed", seed);
-            AddParameter(parameters, "Size", FollowSize(Input(inputs, "latent_image")));
+            AddParameter(parameters, "Seed", main.Seed);
+            AddParameter(parameters, "Size", FollowSize(main.LatentImage));
             AddParameter(parameters, "Model", modelName);
             AddParameter(parameters, "LoRA", loras.Count > 0 ? string.Join(", ", loras) : null);
+            AddParameter(parameters, "Denoising strength", PartialDenoise(main.Denoise));
 
-            // 1 は「全部やり直す」（ふつうの txt2img）なので出さない
-            if (denoise is not null && !(double.TryParse(denoise, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && d >= 1.0))
+            if (hires is { } h)
             {
-                AddParameter(parameters, "Denoising strength", denoise);
+                AddHires(parameters, main, h.Settings, h.Path);
             }
 
             return new GenerationInfo(GenerationSources.PngComfyUI, NullIfBlank(prompt), NullIfBlank(negativePrompt), parameters, raw);
+        }
+
+        /// <summary>
+        /// 高解像度化（2回目のパス）の設定を足す。拡大の倍率・大きさ・方法は、間にある拡大のノードから読む
+        /// （LatentUpscaleBy / LatentUpscale / ImageScaleBy / ImageScale / ImageUpscaleWithModel）。
+        /// サンプラーと CFG スケールは、1回目と違うときだけ出す
+        /// </summary>
+        private void AddHires(List<KeyValuePair<string, string>> parameters, SamplerSettings main, SamplerSettings hires, List<JsonElement> path)
+        {
+            string? scale = null, resize = null, upscaler = null;
+            bool usesModel = false;
+            foreach (var node in path)
+            {
+                var inputs = Inputs(node);
+                scale ??= Scalar(Input(inputs, "scale_by"));
+                if (resize is null && Scalar(Input(inputs, "width")) is { } width && Scalar(Input(inputs, "height")) is { } height)
+                {
+                    resize = $"{width}x{height}";
+                }
+
+                // 拡大モデル（ImageUpscaleWithModel → UpscaleModelLoader）があれば、その名前を優先する
+                if (Scalar(Input(Inputs(LinkedNode(Input(inputs, "upscale_model"))), "model_name")) is { } model)
+                {
+                    upscaler = model;
+                    usesModel = true;
+                }
+                else
+                {
+                    upscaler ??= Scalar(Input(inputs, "upscale_method"));
+                }
+            }
+
+            // 拡大モデルを使っているときは、モデルの倍率（4x など）に ImageScaleBy の倍率（0.5 など）を掛けたものが本当の倍率で、
+            // モデルの倍率は JSON から分からない。間違った倍率を出さないよう、倍率は出さない
+            if (usesModel)
+            {
+                scale = null;
+            }
+
+            AddParameter(parameters, "Hires upscale", scale);
+            AddParameter(parameters, "Hires resize", resize);
+            AddParameter(parameters, "Hires upscaler", upscaler);
+            AddParameter(parameters, "Hires steps", hires.Steps);
+            AddParameter(parameters, "Hires denoising strength", PartialDenoise(hires.Denoise));
+            if (!string.Equals(hires.Sampler, main.Sampler, StringComparison.Ordinal))
+            {
+                AddParameter(parameters, "Hires sampler", hires.Sampler);
+            }
+            if (!string.Equals(hires.Cfg, main.Cfg, StringComparison.Ordinal))
+            {
+                AddParameter(parameters, "Hires CFG scale", hires.Cfg);
+            }
+        }
+
+        /// <summary>ノイズ除去の強さ。1 は「全部やり直す」（ふつうの txt2img）なので null（出さない）</summary>
+        private static string? PartialDenoise(string? denoise) =>
+            denoise is not null && !(double.TryParse(denoise, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && d >= 1.0)
+                ? denoise
+                : null;
+
+        /// <summary>
+        /// 画像・潜在画像のつながり（<see cref="ImageChainInputs"/>）をさかのぼって、target のノードまでたどれたら、
+        /// 間にあるノードを近い順に返す（すぐ target なら空）。たどれなければ null
+        /// </summary>
+        private List<JsonElement>? PathTo(JsonElement link, string target) =>
+            PathTo(link, target, new HashSet<string>(StringComparer.Ordinal), 0);
+
+        private List<JsonElement>? PathTo(JsonElement link, string target, HashSet<string> visited, int depth)
+        {
+            if (depth > MaxLinkDepth || !TryGetLink(link, out var id, out _))
+            {
+                return null;
+            }
+            if (id == target)
+            {
+                return [];
+            }
+            if (!visited.Add(id) || !_nodes.TryGetValue(id, out var node))
+            {
+                return null;
+            }
+
+            var inputs = Inputs(node);
+            foreach (var key in ImageChainInputs)
+            {
+                if (PathTo(Input(inputs, key), target, visited, depth + 1) is { } rest)
+                {
+                    rest.Insert(0, node);
+                    return rest;
+                }
+            }
+            return null;
         }
 
         /// <summary>SamplerCustom 系の sampler（KSamplerSelect）と sigmas（BasicScheduler など）を読む</summary>
@@ -192,9 +322,22 @@ public sealed partial class GenerationInfo
 
             var inputs = Inputs(node);
 
+            // FluxGuidance / CLIPTextEncodeFlux など：guidance を持っていれば拾う
+            if (guidance is not null && Scalar(Input(inputs, "guidance")) is { } g)
+            {
+                guidance.Add(g);
+            }
+
+            // ImpactWildcardEncode：ワイルドカードを展開した後の文字列（populated_text）が、実際に使ったプロンプト
+            if (Text(Input(inputs, "populated_text"), depth) is { } populated && !string.IsNullOrWhiteSpace(populated))
+            {
+                texts.Add(populated.Trim());
+                return;
+            }
+
             // CLIPTextEncode など：text がプロンプト（別のノードの文字列につながっていることもある）
             bool found = false;
-            foreach (var key in new[] { "text", "text_g", "text_l", "prompt" })
+            foreach (var key in PromptInputs)
             {
                 if (Text(Input(inputs, key), depth) is { } text && !string.IsNullOrWhiteSpace(text))
                 {
@@ -207,16 +350,28 @@ public sealed partial class GenerationInfo
                 return;
             }
 
-            if (guidance is not null && ClassType(node) == "FluxGuidance" && Scalar(Input(inputs, "guidance")) is { } g)
-            {
-                guidance.Add(g);
-            }
-
-            // ControlNetApplyAdvanced などは positive と negative を両方受けて、出力 0 が positive、1 が negative
+            // positive と negative を両方持つノード。どちらの出力につながっているかで選ぶ
+            // （ControlNetApplyAdvanced などは出力 0 が positive、1 が negative。
+            //   Efficient Loader は positive / negative に文字列を直接書き、出力 1 が positive、2 が negative）
             if (Input(inputs, "positive").ValueKind != JsonValueKind.Undefined
                 && Input(inputs, "negative").ValueKind != JsonValueKind.Undefined)
             {
-                CollectTexts(Input(inputs, output == 0 ? "positive" : "negative"), texts, guidance, visited, depth + 1);
+                bool isEfficientLoader = ClassType(node) is { } type
+                    && (type.Contains("Efficient Loader", StringComparison.Ordinal) || type.Contains("Eff. Loader", StringComparison.Ordinal));
+                int positiveOutput = isEfficientLoader ? 1 : 0;
+                var chosen = Input(inputs, output == positiveOutput ? "positive" : "negative");
+
+                if (chosen.ValueKind == JsonValueKind.String)
+                {
+                    if (chosen.GetString() is { } direct && !string.IsNullOrWhiteSpace(direct))
+                    {
+                        texts.Add(direct.Trim());
+                    }
+                }
+                else
+                {
+                    CollectTexts(chosen, texts, guidance, visited, depth + 1);
+                }
                 return;
             }
 
@@ -243,11 +398,7 @@ public sealed partial class GenerationInfo
                 }
 
                 var inputs = Inputs(node);
-                if (Scalar(Input(inputs, "lora_name")) is { } lora)
-                {
-                    var strength = Scalar(Input(inputs, "strength_model"));
-                    loras.Insert(0, strength is null ? lora : $"{lora} ({strength})"); // 根元のものから順に並べる
-                }
+                loras.InsertRange(0, LorasOf(inputs)); // 根元のものから順に並べる
 
                 foreach (var key in new[] { "ckpt_name", "unet_name", "model_name" })
                 {
@@ -260,6 +411,57 @@ public sealed partial class GenerationInfo
                 link = Input(inputs, "model");
             }
             return (null, loras);
+        }
+
+        /// <summary>
+        /// 1つのノードに書いてある LoRA を「名前 (強さ)」で返す（書いてある順）。「None」や、オフにしてあるものは除く。
+        /// <list type="bullet">
+        /// <item>LoraLoader / LoraLoaderModelOnly：lora_name と strength_model</item>
+        /// <item>Efficient Loader：lora_name と lora_model_strength</item>
+        /// <item>Power Lora Loader (rgthree)：lora_1, lora_2, … に { "on": true, "lora": 名前, "strength": 強さ }</item>
+        /// <item>Lora Loader Stack (rgthree)：lora_01, lora_02, … と strength_01, strength_02, …</item>
+        /// </list>
+        /// </summary>
+        private List<string> LorasOf(JsonElement inputs)
+        {
+            var loras = new List<string>();
+
+            void Add(string? name, string? strength)
+            {
+                if (!string.IsNullOrWhiteSpace(name) && !string.Equals(name, "None", StringComparison.OrdinalIgnoreCase))
+                {
+                    loras.Add(strength is null ? name : $"{name} ({strength})");
+                }
+            }
+
+            if (Scalar(Input(inputs, "lora_name")) is { } single)
+            {
+                Add(single, Scalar(Input(inputs, "strength_model")) ?? Scalar(Input(inputs, "lora_model_strength")));
+            }
+
+            foreach (var input in Properties(inputs))
+            {
+                if (!input.Name.StartsWith("lora_", StringComparison.Ordinal) || input.Name == "lora_name")
+                {
+                    continue;
+                }
+
+                if (input.Value.ValueKind == JsonValueKind.Object)
+                {
+                    // Power Lora Loader：オフ（"on": false）のものは使っていない
+                    var entry = input.Value;
+                    if (Input(entry, "on").ValueKind != JsonValueKind.False)
+                    {
+                        Add(Scalar(Input(entry, "lora")), Scalar(Input(entry, "strength")));
+                    }
+                }
+                else if (input.Value.ValueKind == JsonValueKind.String)
+                {
+                    // Lora Loader Stack：lora_01 の強さは strength_01
+                    Add(input.Value.GetString(), Scalar(Input(inputs, "strength_" + input.Name["lora_".Length..])));
+                }
+            }
+            return loras;
         }
 
         /// <summary>latent_image のつながりをたどって、大きさ（「512x768」）を返す。img2img などで分からなければ null</summary>
@@ -277,6 +479,13 @@ public sealed partial class GenerationInfo
                 if (Scalar(Input(inputs, "width")) is { } width && Scalar(Input(inputs, "height")) is { } height)
                 {
                     return $"{width}x{height}";
+                }
+
+                // Efficient Loader は、空の潜在画像の大きさを自分で持っている
+                if (Scalar(Input(inputs, "empty_latent_width")) is { } emptyWidth
+                    && Scalar(Input(inputs, "empty_latent_height")) is { } emptyHeight)
+                {
+                    return $"{emptyWidth}x{emptyHeight}";
                 }
 
                 link = Input(inputs, "samples") is { ValueKind: not JsonValueKind.Undefined } samples ? samples : Input(inputs, "latent");
@@ -307,17 +516,27 @@ public sealed partial class GenerationInfo
                 case JsonValueKind.True:
                 case JsonValueKind.False:
                     return value.GetRawText();
-                case JsonValueKind.Array when depth < MaxLinkDepth && TryGetLink(value, out var id, out _)
+                case JsonValueKind.Array when depth < MaxLinkDepth && TryGetLink(value, out var id, out int output)
                                               && _nodes.TryGetValue(id, out var node):
-                    foreach (var input in Properties(Inputs(node)))
+                {
+                    var inputs = Inputs(node);
+
+                    // SDXL Prompt Styler など：出力 0 が positive、1 が negative の文字列
+                    if (Input(inputs, "text_positive").ValueKind != JsonValueKind.Undefined
+                        && Input(inputs, "text_negative").ValueKind != JsonValueKind.Undefined)
                     {
-                        if (input.Name is "value" or "seed" or "noise_seed" or "int" or "float" or "number" or "string" or "text"
-                            && Scalar(input.Value, depth + 1) is { } found)
+                        return Scalar(Input(inputs, output == 0 ? "text_positive" : "text_negative"), depth + 1);
+                    }
+
+                    foreach (var key in ValueInputs)
+                    {
+                        if (Scalar(Input(inputs, key), depth + 1) is { } found)
                         {
                             return found;
                         }
                     }
                     return null;
+                }
                 default:
                     return null;
             }

@@ -174,6 +174,7 @@ public partial class MainWindow : Window
 
         UpdateSortButtons();
         UpdateStatus();
+        ApplyImageBackground();
         ShowNativeLibraryWarning();
     }
 
@@ -1082,6 +1083,144 @@ public partial class MainWindow : Window
     private void ExplorerButton_Click(object sender, RoutedEventArgs e) => OpenInExplorer();
 
     // ------------------------------------------------------------
+    // 画像の後ろ（透明な部分）
+    // ------------------------------------------------------------
+
+    // 市松模様の1マスの大きさ（画面上の DIP）。ズームしても画面上では同じ大きさに見えるようにする
+    private const double CheckerCellSize = 8;
+
+    // 市松模様。拡大率に合わせてマスの大きさ（Viewport）を変えるので、Freeze しない
+    private readonly DrawingBrush _checkerBrush = CreateCheckerBrush();
+
+    private static DrawingBrush CreateCheckerBrush()
+    {
+        var light = new SolidColorBrush(Color.FromRgb(0xFF, 0xFF, 0xFF));
+        var dark = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC));
+        light.Freeze();
+        dark.Freeze();
+
+        // 2×2 マスで1枚。白を敷いて、左上と右下に灰色を置く
+        var drawing = new DrawingGroup();
+        drawing.Children.Add(new GeometryDrawing(light, null, new RectangleGeometry(new Rect(0, 0, 2, 2))));
+        drawing.Children.Add(new GeometryDrawing(dark, null, new RectangleGeometry(new Rect(0, 0, 1, 1))));
+        drawing.Children.Add(new GeometryDrawing(dark, null, new RectangleGeometry(new Rect(1, 1, 1, 1))));
+        drawing.Freeze();
+
+        return new DrawingBrush(drawing)
+        {
+            TileMode = TileMode.Tile,
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, CheckerCellSize * 2, CheckerCellSize * 2),
+            Stretch = Stretch.Fill,
+        };
+    }
+
+    /// <summary>B で「何も敷かない → 市松模様 → 白」と切り替える（終了時に ini に保存する）</summary>
+    private void CycleImageBackground()
+    {
+        _settings.ImageBackground = _settings.ImageBackground switch
+        {
+            ImageBackground.Default => ImageBackground.Checker,
+            ImageBackground.Checker => ImageBackground.White,
+            _ => ImageBackground.Default,
+        };
+        ApplyImageBackground();
+
+        ShowNotice(_settings.ImageBackground switch
+        {
+            ImageBackground.Checker => "背景：市松模様",
+            ImageBackground.White => "背景：白",
+            _ => "背景：なし",
+        });
+    }
+
+    private void ApplyImageBackground()
+    {
+        ImageBackdrop.Fill = _settings.ImageBackground switch
+        {
+            ImageBackground.Checker => _checkerBrush,
+            ImageBackground.White => Brushes.White,
+            _ => null,
+        };
+        UpdateCheckerScale();
+    }
+
+    /// <summary>
+    /// 市松模様のマスを、拡大率に関係なく画面上で同じ大きさにする。
+    /// 敷いている四角は画像と一緒に _zoom 倍されるので、その分だけマスを小さく（大きく）しておく。
+    /// </summary>
+    private void UpdateCheckerScale()
+    {
+        if (_settings.ImageBackground != ImageBackground.Checker || _zoom <= 0) return;
+
+        // 四角の大きさは DIP（UpdateImageBaseSize）で、RenderTransform で _zoom 倍される
+        double size = CheckerCellSize * 2 / _zoom;
+        _checkerBrush.Viewport = new Rect(0, 0, size, size);
+    }
+
+    // ------------------------------------------------------------
+    // クリップボードにコピー
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 画像をクリップボードにコピーする（Ctrl+C）。ファイルは変えない。
+    /// 1枚表示では、見えているとおり（アニメーションは今のコマ、R / L で回した向き）。縮めて読んでいたら元の大きさで読み直す。
+    /// 一覧では、選択中の画像（1コマ目）を読んでコピーする。
+    /// </summary>
+    private async Task CopyImageAsync()
+    {
+        if (_navigator.Current is not { } path) return;
+
+        BitmapSource? image = null;
+        int rotation = 0;
+        if (!_thumbnailMode && _image is { } shown
+            && string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            rotation = _rotation;
+            image = shown.IsReduced ? null : _player.CurrentFrame ?? shown.Image;
+        }
+
+        if (image is null)
+        {
+            // 縮めて読んだ画像・一覧で選んだだけの画像は、元の大きさで読む
+            try
+            {
+                image = (await Task.Run(() => _loader.Load(path))).Image;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                ShowNotice("コピーする画像を読み込めませんでした");
+                return;
+            }
+
+            if (!string.Equals(_navigator.Current, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return; // 読んでいる間に別の画像へ移った
+            }
+        }
+
+        if (rotation != 0)
+        {
+            var rotate = new RotateTransform(rotation);
+            rotate.Freeze();
+            image = new TransformedBitmap(image, rotate);
+        }
+
+        try
+        {
+            ClipboardImage.Copy(image);
+            ShowNotice("画像をコピーしました");
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.ExternalException or OutOfMemoryException)
+        {
+            // ほかのアプリがクリップボードを使っている・大きすぎる
+            Debug.WriteLine(ex);
+            ShowNotice("クリップボードにコピーできませんでした");
+        }
+    }
+
+    // ------------------------------------------------------------
     // 情報パネル（EXIF）
     // ------------------------------------------------------------
 
@@ -1418,6 +1557,7 @@ public partial class MainWindow : Window
             ImageView,
             _zoom >= 2.0 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
 
+        UpdateCheckerScale();
         EnsureResolution();
     }
 
@@ -1865,6 +2005,20 @@ public partial class MainWindow : Window
                 ShowOpenDialog();
                 break;
 
+            case Key.C when ctrl:
+                if (!e.IsRepeat)
+                {
+                    _ = CopyImageAsync();
+                }
+                break;
+
+            case Key.B:
+                if (!e.IsRepeat)
+                {
+                    CycleImageBackground();
+                }
+                break;
+
             case Key.T:
                 if (!e.IsRepeat)
                 {
@@ -1995,6 +2149,14 @@ public partial class MainWindow : Window
                 ShowOpenDialog();
                 break;
 
+            // 選択中の画像を読んでコピーする
+            case Key.C when ctrl:
+                if (!e.IsRepeat)
+                {
+                    _ = CopyImageAsync();
+                }
+                break;
+
             // 一覧では Enter は全画面ではなく「開く」（全画面はツールバーのボタンで）
             case Key.Enter:
             case Key.T:
@@ -2051,6 +2213,34 @@ public partial class MainWindow : Window
                     return;
                 }
                 break;
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// マウスの「戻る」「進む」ボタンで、前 / 次の画像へ（一覧では選択を前 / 次へ）。
+    /// 1枚表示でフォルダの端なら、← → と同じようにダイアログで聞く。
+    /// </summary>
+    private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        int direction = e.ChangedButton switch
+        {
+            MouseButton.XButton1 => -1, // 戻る
+            MouseButton.XButton2 => +1, // 進む
+            _ => 0,
+        };
+        if (direction == 0) return;
+
+        if (_thumbnailMode)
+        {
+            ThumbnailView.HandleKey(direction > 0 ? Key.Right : Key.Left);
+        }
+        else
+        {
+            // ホイールと同じく、端のダイアログを閉じた直後に続けて押したときは出し直さない
+            bool justClosed = _sinceEdgeDialog.IsRunning && _sinceEdgeDialog.Elapsed < TimeSpan.FromSeconds(1);
+            GoNextOrAsk(direction, suppressDialog: justClosed);
         }
 
         e.Handled = true;

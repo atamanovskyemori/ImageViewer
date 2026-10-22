@@ -280,6 +280,27 @@ namespace ImageViewer.Tests.Settings
         }
 
         [TestMethod]
+        public void Image_Background_Defaults_And_Is_Always_Written()
+        {
+            var settings = AppSettings.FromIni(new IniFile());
+
+            Assert.AreEqual(ImageBackground.Default, settings.ImageBackground);
+            Assert.AreEqual("Default", settings.ToIni().Get("View", "Background"));
+        }
+
+        [TestMethod]
+        [DataRow("Checker", ImageBackground.Checker)]
+        [DataRow("white", ImageBackground.White)]
+        [DataRow("Rainbow", ImageBackground.Default)]
+        [DataRow("99", ImageBackground.Default)]
+        public void Image_Background_Is_Read(string value, ImageBackground expected)
+        {
+            var settings = AppSettings.FromIni(IniFile.Parse($"[View]\nBackground={value}\n"));
+
+            Assert.AreEqual(expected, settings.ImageBackground);
+        }
+
+        [TestMethod]
         public void Broken_SingleInstance_Falls_Back_To_True()
         {
             var settings = AppSettings.FromIni(IniFile.Parse("[Startup]\nSingleInstance=maybe\n"));

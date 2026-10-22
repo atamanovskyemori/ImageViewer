@@ -12,6 +12,19 @@ namespace ImageViewer.Settings;
 /// </summary>
 public sealed record WindowBounds(int Left, int Top, int Width, int Height, bool Maximized);
 
+/// <summary>画像の後ろ（透明な部分）に敷くもの。B で順に切り替える</summary>
+public enum ImageBackground
+{
+    /// <summary>何も敷かない（ウィンドウと同じ暗い灰色）</summary>
+    Default,
+
+    /// <summary>市松模様（どこが透明か分かる）</summary>
+    Checker,
+
+    /// <summary>白</summary>
+    White,
+}
+
 /// <summary>
 /// アプリの設定。exe と同じフォルダの ImageViewer.ini に保存する。
 /// 読めない値・壊れた値は無視して既定値を使う（設定が原因で起動できない、ということがないように）。
@@ -30,6 +43,7 @@ public sealed class AppSettings
     private const string SlideshowSection = "Slideshow";
     private const string InfoPanelSection = "InfoPanel";
     private const string StartupSection = "Startup";
+    private const string ViewSection = "View";
 
     /// <summary>アニメーション1枚のメモリ上限の既定値（MB）</summary>
     public const int DefaultAnimationMaxMemoryMB = 256;
@@ -89,6 +103,9 @@ public sealed class AppSettings
     /// 2つのウィンドウで見比べたいときは false にする。ini を手で編集して変える（次の起動から効く）。
     /// </summary>
     public bool SingleInstance { get; set; } = true;
+
+    /// <summary>画像の後ろ（透明な部分）に敷くもの。B で切り替えたものを保存する</summary>
+    public ImageBackground ImageBackground { get; set; } = ImageBackground.Default;
 
     /// <summary>情報パネルの幅を、受け付ける範囲に収める</summary>
     public static int ClampInfoPanelWidth(int width) => Math.Clamp(width, MinInfoPanelWidth, MaxInfoPanelWidth);
@@ -194,6 +211,12 @@ public sealed class AppSettings
             settings.InfoPanelWidth = ClampInfoPanelWidth(infoWidth);
         }
 
+        if (Enum.TryParse(ini.Get(ViewSection, "Background"), ignoreCase: true, out ImageBackground background)
+            && Enum.IsDefined(background))
+        {
+            settings.ImageBackground = background;
+        }
+
         if (TryGetBool(ini, StartupSection, "SingleInstance", out bool singleInstance))
         {
             settings.SingleInstance = singleInstance;
@@ -234,6 +257,8 @@ public sealed class AppSettings
         ini.Set(SlideshowSection, "IntervalSeconds", SlideshowIntervalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
 
         ini.Set(InfoPanelSection, "Width", Format(ClampInfoPanelWidth(InfoPanelWidth)));
+
+        ini.Set(ViewSection, "Background", ImageBackground.ToString());
 
         // 手で編集できるように、既定値のままでも必ず書き出す
         ini.Set(StartupSection, "SingleInstance", Format(SingleInstance));

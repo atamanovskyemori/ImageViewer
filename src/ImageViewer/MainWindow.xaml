@@ -9,7 +9,8 @@
         MinWidth="320" MinHeight="240"
         WindowStartupLocation="CenterScreen"
         Background="#FF1E1E1E"
-        PreviewKeyDown="Window_PreviewKeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewMouseDown="Window_PreviewMouseDown">
 
     <Window.Resources>
         <!-- アイコンは Windows 標準のアイコンフォントを使う（Win11: Segoe Fluent Icons / Win10: Segoe MDL2 Assets） -->
@@ -224,6 +225,13 @@
                     SizeChanged="Viewport_SizeChanged"
                     DragOver="Viewport_DragOver"
                     Drop="Viewport_Drop">
+                <!-- 画像の後ろ（透明な部分）に敷くもの（B で切り替え）。画像と同じ大きさ・同じ変換で重ねる -->
+                <Rectangle x:Name="ImageBackdrop"
+                           Canvas.Left="0" Canvas.Top="0"
+                           Width="{Binding Width, ElementName=ImageView}"
+                           Height="{Binding Height, ElementName=ImageView}"
+                           RenderTransform="{Binding RenderTransform, ElementName=ImageView}"
+                           IsHitTestVisible="False" />
                 <Image x:Name="ImageView"
                        Canvas.Left="0" Canvas.Top="0"
                        Stretch="Fill"

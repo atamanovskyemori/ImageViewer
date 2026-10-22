@@ -84,6 +84,12 @@ public sealed class ThumbnailCache
         _stampOf = stampOf ?? FileStamp.Of;
     }
 
+    /// <summary>
+    /// 同時に作る枚数の目安。CPU のコア数の半分（2〜4枚）。
+    /// 少なすぎると一覧が埋まるのが遅く、多すぎると1枚表示に戻ったときのデコードや、ディスクの読み込みと取り合う。
+    /// </summary>
+    public static int ConcurrencyFor(int processorCount) => Math.Clamp(processorCount / 2, 2, 4);
+
     public int PixelSize { get; }
 
     public long MaxBytes { get; }

@@ -45,6 +45,18 @@ namespace ImageViewer.Tests.Imaging
         }
 
         [TestMethod]
+        [DataRow(1, 2)]
+        [DataRow(2, 2)]
+        [DataRow(4, 2)]
+        [DataRow(6, 3)]
+        [DataRow(8, 4)]
+        [DataRow(32, 4)]
+        public void Concurrency_Is_Half_The_Cores_Between_2_And_4(int processors, int expected)
+        {
+            Assert.AreEqual(expected, ThumbnailCache.ConcurrencyFor(processors));
+        }
+
+        [TestMethod]
         public async Task Second_Request_Is_Served_From_Cache_Synchronously()
         {
             var cache = CreateCache();

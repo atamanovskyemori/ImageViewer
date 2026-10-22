@@ -663,7 +663,8 @@ public partial class MainWindow : Window
             _thumbnailCache = new ThumbnailCache(
                 new ThumbnailDecoder(),
                 pixelSize,
-                _settings.ThumbnailMaxMemoryMB * BytesPerMB);
+                _settings.ThumbnailMaxMemoryMB * BytesPerMB,
+                ThumbnailCache.ConcurrencyFor(Environment.ProcessorCount));
         }
         return _thumbnailCache;
     }

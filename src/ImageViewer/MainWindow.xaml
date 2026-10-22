@@ -79,6 +79,14 @@
                     <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE7AD;" />
                 </Button>
 
+                <!-- 表示の固定（ズーム・位置・回転を次の画像でもそのままにする） -->
+                <ToggleButton x:Name="ViewLockButton"
+                              Style="{StaticResource ToolBarToggleButton}"
+                              ToolTip="表示を固定 (Z)：ズーム・位置・回転を次の画像でもそのままにする"
+                              Click="ViewLockButton_Click">
+                    <TextBlock Style="{StaticResource ToolBarIcon}" Text="&#xE72E;" />
+                </ToggleButton>
+
                 <Separator />
 
                 <Button x:Name="FullScreenButton"

@@ -1313,9 +1313,18 @@ public partial class MainWindow : Window
     // 表示（ズーム・パン・回転）
     // ------------------------------------------------------------
 
-    /// <summary>表示する画像を切り替える。アニメーションなら最初から自動再生する。</summary>
+    /// <summary>
+    /// 表示する画像を切り替える。アニメーションなら最初から自動再生する。
+    /// ふだんはウィンドウに収めて回転なしで出す。表示を固定しているときは、前の画像の見え方を引き継ぐ。
+    /// </summary>
     private void SetImage(DecodedImage? image, string? path)
     {
+        // 表示の固定中は、切り替える前の見え方を覚えておく（読めない画像を挟んでも、その前の見え方を使う）
+        if (_viewLocked && _bitmap is not null)
+        {
+            _lockedView = CaptureView();
+        }
+
         var bitmap = image?.Image;
 
         _image = image;
@@ -1340,9 +1349,69 @@ public partial class MainWindow : Window
         }
 
         UpdateImageBaseSize();
-        _fitMode = true;
-        FitToWindow();
+        if (_viewLocked && _lockedView is { } view)
+        {
+            ApplyView(view);
+        }
+        else
+        {
+            _fitMode = true;
+            FitToWindow();
+        }
     }
+
+    // ------------------------------------------------------------
+    // 表示の固定（ズーム・位置・回転を次の画像でもそのままにする）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 画像の見え方。Center は画面の中央に見えている場所（画像の大きさに対する割合）。
+    /// 割合にしておくので、大きさの違う画像でも同じあたりを出せる
+    /// </summary>
+    private sealed record ViewState(bool Fit, double Zoom, int Rotation, Point Center);
+
+    // 表示を固定しているか（保存しない。起動したときはいつも固定していない）
+    private bool _viewLocked;
+
+    // 固定しているときに、次の画像に引き継ぐ見え方
+    private ViewState? _lockedView;
+
+    private ViewState CaptureView() => new(
+        _fitMode,
+        _zoom,
+        _rotation,
+        ViewGeometry.ToImageRatio(ViewportCenter, BaseSize, _rotation, _zoom, _offset));
+
+    /// <summary>覚えておいた見え方を、今の画像に当てる。倍率はそのまま（等倍なら等倍）、中央に同じ場所を出す</summary>
+    private void ApplyView(ViewState view)
+    {
+        _rotation = view.Rotation;
+        if (view.Fit)
+        {
+            _fitMode = true;
+            FitToWindow();
+            return;
+        }
+
+        _fitMode = false;
+        _zoom = view.Zoom;
+        _offset = ViewGeometry.OffsetFor(view.Center, ViewportCenter, BaseSize, _rotation, _zoom);
+        ClampOffset();
+        ApplyTransform();
+    }
+
+    /// <summary>Z / ツールバーで、表示の固定をオン ⇔ オフ</summary>
+    private void ToggleViewLock()
+    {
+        _viewLocked = !_viewLocked;
+        _lockedView = null; // 次に画像を切り替えるときの見え方を覚える
+        ViewLockButton.IsChecked = _viewLocked;
+        ShowNotice(_viewLocked
+            ? "表示を固定：ズーム・位置・回転を次の画像でもそのままにします"
+            : "表示の固定を解除しました");
+    }
+
+    private void ViewLockButton_Click(object sender, RoutedEventArgs e) => ToggleViewLock();
 
     /// <summary>
     /// 等倍（1.0）・回転なしのときの Image のサイズを、DPIを考慮して設定する。
@@ -1434,10 +1503,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>回転を反映した、等倍時の見た目のサイズ（90°/270°なら縦横が入れ替わる）</summary>
-    private Size RotatedBaseSize =>
-        _rotation % 180 == 0
-            ? new Size(ImageView.Width, ImageView.Height)
-            : new Size(ImageView.Height, ImageView.Width);
+    private Size RotatedBaseSize => ViewGeometry.Rotated(BaseSize, _rotation);
 
     /// <summary>ウィンドウに収まるように表示（小さい画像は拡大しない）</summary>
     private void FitToWindow()
@@ -1535,24 +1601,11 @@ public partial class MainWindow : Window
         _offset = new Vector(x, y);
     }
 
-    /// <summary>
-    /// Image（等倍・回転なしの矩形）→ 画面 への変換行列を作る。
-    /// 1. 画像の中心を原点に移す → 2. 回転 → 3. 回転後の外接矩形の左上を原点に戻す
-    /// → 4. 拡縮 → 5. オフセット分ずらす
-    /// </summary>
-    private Matrix BuildMatrix()
-    {
-        double w = ImageView.Width, h = ImageView.Height;
-        var rotated = RotatedBaseSize;
+    /// <summary>等倍・回転なしのときの Image の大きさ（DIP）</summary>
+    private Size BaseSize => new(ImageView.Width, ImageView.Height);
 
-        var m = Matrix.Identity;
-        m.Translate(-w / 2, -h / 2);
-        m.Rotate(_rotation);
-        m.Translate(rotated.Width / 2, rotated.Height / 2);
-        m.Scale(_zoom, _zoom);
-        m.Translate(_offset.X, _offset.Y);
-        return m;
-    }
+    /// <summary>Image（等倍・回転なしの矩形）→ 画面 への変換行列（<see cref="ViewGeometry.Build"/>）</summary>
+    private Matrix BuildMatrix() => ViewGeometry.Build(BaseSize, _rotation, _zoom, _offset);
 
     private void ApplyTransform()
     {
@@ -2025,6 +2078,13 @@ public partial class MainWindow : Window
                 if (!e.IsRepeat)
                 {
                     CycleImageBackground();
+                }
+                break;
+
+            case Key.Z:
+                if (!e.IsRepeat)
+                {
+                    ToggleViewLock();
                 }
                 break;
 

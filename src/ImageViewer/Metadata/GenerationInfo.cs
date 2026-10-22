@@ -9,11 +9,13 @@ public static class GenerationSources
 {
     public const string PngParameters = "PNG（parameters）";
     public const string ExifUserComment = "EXIF（UserComment）";
+    public const string PngComfyUI = "PNG（ComfyUI の prompt）";
 }
 
 /// <summary>
 /// 画像生成AIが画像に書き込んだ生成情報（プロンプトなど）。
-/// 今は Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）の書き方を読む。
+/// Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）の書き方を読む。
+/// ComfyUI のノード構成からも、同じ形に取り出せる（<see cref="ParseComfyUI"/>。GenerationInfo.ComfyUI.cs）。
 /// <code>
 /// （プロンプト。複数行のこともある）
 /// Negative prompt: （ネガティブプロンプト。複数行のこともある）

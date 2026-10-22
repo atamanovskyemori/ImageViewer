@@ -58,6 +58,7 @@ src/ImageViewer/
     ImageInfoLoader.cs        ファイルの情報と EXIF を裏で読む（画像はデコードしない）
     PngTextReader.cs          PNG のテキストチャンク（tEXt / zTXt / iTXt）を読む
     GenerationInfo.cs         画像生成AIの生成情報（WebUI の parameters / EXIF の UserComment）を読む
+    GenerationInfo.ComfyUI.cs ComfyUI のノード構成（PNG の prompt）から生成情報を取り出す
     InfoPanel.xaml(.cs)       右側の情報パネル
   Settings/
     IniFile.cs                INI ファイルの読み書き（UTF-8）
@@ -257,13 +258,20 @@ I かツールバーのボタンで、右側に情報パネルを出す / 隠す
 
 ### 生成情報（画像生成AIのプロンプトなど）
 
-Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）が画像に書き込んだ生成情報を、「生成情報」の欄に出す。
+Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に書き込んだ生成情報を、「生成情報」の欄に出す。
 
-- 読む場所：PNG はテキストチャンク `parameters`、JPEG / WebP は EXIF の UserComment
+- 読む場所：PNG はテキストチャンク `parameters`（WebUI）か `prompt`（ComfyUI）、JPEG / WebP は EXIF の UserComment
 - プロンプト・ネガティブプロンプト（どちらも全文）と、設定の行（ステップ数・サンプラー・CFG スケール・シード・サイズ・モデルなど。知らない項目は WebUI の書き方のまま）
 - 右クリック →「プロンプトをコピー」「ネガティブプロンプトをコピー」で、そのまま WebUI に貼れる
 - JPEG / WebP の UserComment は、最後に「Steps: …」の設定の行があるときだけ生成情報とみなす（カメラのふつうのコメントと間違えないように）。それ以外は「その他」に「コメント」として出す
-- PNG のほかのテキスト（`Software` など。ComfyUI の `prompt` / `workflow` も）は「PNG テキスト」の欄にそのまま出す。2000 文字を超えるものは省略する
+- ComfyUI はノード構成（`prompt` の JSON）から取り出す。サンプラーのノード（KSampler / KSamplerAdvanced / SamplerCustom / SamplerCustomAdvanced）から、つながりをたどる
+  - positive / negative の先の CLIPTextEncode などの文字列がプロンプト（ConditioningCombine で複数あれば改行でつなぐ。ControlNet などを間に挟んでいてもたどる。文字列を別のノードから渡していてもたどる）
+  - model の先のチェックポイント（UNETLoader も）がモデル、途中の LoraLoader が LoRA（「名前 (強さ)」をチェックポイントの側から順に）
+  - latent_image の先の EmptyLatentImage などがサイズ。ステップ数・サンプラー・スケジューラ・CFG スケール・シードはサンプラーのノードから（SamplerCustomAdvanced は RandomNoise・KSamplerSelect・BasicScheduler・CFGGuider などから）。Flux の FluxGuidance はガイダンスとして出す
+  - ノイズ除去の強さは 1 より小さいとき（img2img など）だけ出す
+  - サンプラーが複数ある（高解像度化など）ときは、空の潜在画像から始めているもの（最初のパス）を出す
+  - カスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
+- PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
 - EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク）。HEIC などは「ファイル」の欄だけ
 - 読むのはヘッダとメタデータだけで、画像はデコードしない。裏のスレッドで読むので、表示は待たせない

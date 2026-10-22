@@ -68,6 +68,8 @@ public static class ImageInfoBuilder
         ["Hires upscaler"] = "高解像度化の拡大方法",
         ["Hires steps"] = "高解像度化のステップ数",
         ["Version"] = "バージョン",
+        ["Guidance"] = "ガイダンス",
+        ["LoRA"] = "LoRA",
     };
 
     /// <param name="generation">生成AIの生成情報。無ければ null</param>
@@ -110,10 +112,18 @@ public static class ImageInfoBuilder
         // ----- PNG のテキスト（生成情報として読んだもの以外） -----
         if (pngTexts is not null)
         {
+            // 生成情報として読んだテキストは、生成情報の欄に出しているので重ねて出さない
+            string? usedKeyword = generation?.Source switch
+            {
+                GenerationSources.PngParameters => "parameters",
+                GenerationSources.PngComfyUI => "prompt",
+                _ => null,
+            };
+
             var textRows = new List<InfoRow>();
             foreach (var text in pngTexts)
             {
-                if (generation is not null && string.Equals(text.Keyword, "parameters", StringComparison.OrdinalIgnoreCase))
+                if (usedKeyword is not null && string.Equals(text.Keyword, usedKeyword, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }

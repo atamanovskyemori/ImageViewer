@@ -55,12 +55,19 @@ public static class ImageInfoLoader
 
             exif = ExifReader.Read(stream);
 
-            // 画像生成AIの生成情報。PNG はテキストチャンク "parameters"、JPEG / WebP は EXIF の UserComment に入っている
+            // 画像生成AIの生成情報。PNG はテキストチャンク "parameters"（WebUI）か "prompt"（ComfyUI）、
+            // JPEG / WebP は EXIF の UserComment に入っている
             if (kind == ImageKind.Png)
             {
                 pngTexts = PngTextReader.Read(stream);
                 var parameters = pngTexts.FirstOrDefault(t => string.Equals(t.Keyword, "parameters", StringComparison.OrdinalIgnoreCase));
                 generation = GenerationInfo.Parse(parameters?.Text, GenerationSources.PngParameters);
+
+                if (generation is null)
+                {
+                    var comfyPrompt = pngTexts.FirstOrDefault(t => string.Equals(t.Keyword, "prompt", StringComparison.Ordinal));
+                    generation = GenerationInfo.ParseComfyUI(comfyPrompt?.Text);
+                }
             }
 
             if (generation is null

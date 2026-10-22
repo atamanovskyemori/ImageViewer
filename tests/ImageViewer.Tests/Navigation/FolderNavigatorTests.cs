@@ -253,6 +253,50 @@ namespace ImageViewer.Tests.Navigation
         }
 
         [TestMethod]
+        public void OpenListing_Selects_First_Or_Last()
+        {
+            CreateFile("a.jpg", 1);
+            CreateFile("b.jpg", 1);
+            var navigator = new FolderNavigator();
+            var listing = FolderNavigator.ListFolder(_root, FileSortKey.Name, descending: false);
+
+            Assert.IsTrue(navigator.OpenListing(listing));
+            Assert.AreEqual("a.jpg", Path.GetFileName(navigator.Current));
+            Assert.AreEqual(_root, navigator.CurrentDirectory);
+
+            Assert.IsTrue(navigator.OpenListing(listing, selectLast: true));
+            Assert.AreEqual("b.jpg", Path.GetFileName(navigator.Current));
+        }
+
+        [TestMethod]
+        public void OpenListing_Resorts_When_Sort_Changed_While_Listing()
+        {
+            CreateFile("a.jpg", 3);
+            CreateFile("b.jpg", 1);
+            CreateFile("c.jpg", 2);
+            var navigator = new FolderNavigator();
+            var listing = FolderNavigator.ListFolder(_root, FileSortKey.Name, descending: false);
+
+            navigator.SetSort(FileSortKey.Size, descending: false);
+            Assert.IsTrue(navigator.OpenListing(listing));
+
+            CollectionAssert.AreEqual(new[] { "b.jpg", "c.jpg", "a.jpg" }, Names(navigator));
+        }
+
+        [TestMethod]
+        public void OpenListing_Of_Empty_Folder_Keeps_The_Current_Folder()
+        {
+            var a = CreateFile("a.jpg", 1);
+            var empty = Path.Combine(_root, "empty");
+            Directory.CreateDirectory(empty);
+            var navigator = Open(FileSortKey.Name, descending: false);
+
+            Assert.IsFalse(navigator.OpenListing(FolderNavigator.ListFolder(empty, FileSortKey.Name, descending: false)));
+            Assert.AreEqual(a, navigator.Current);
+            Assert.AreEqual(_root, navigator.CurrentDirectory);
+        }
+
+        [TestMethod]
         public void OpenSingleFile_Does_Not_List_The_Folder()
         {
             var b = CreateFile("b.jpg", 1);

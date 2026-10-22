@@ -768,7 +768,7 @@ public partial class MainWindow : Window
             {
                 case FolderEdgeChoice.MoveToFolder when sibling is not null:
                     // 次のフォルダは先頭から、前のフォルダは最後から
-                    OpenSiblingFolder(sibling, selectLast: direction < 0);
+                    await OpenSiblingFolderAsync(sibling, selectLast: direction < 0);
                     break;
 
                 case FolderEdgeChoice.Wrap:
@@ -803,7 +803,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            OpenSiblingFolder(sibling, selectLast: direction < 0);
+            await OpenSiblingFolderAsync(sibling, selectLast: direction < 0);
         }
         finally
         {
@@ -830,13 +830,19 @@ public partial class MainWindow : Window
     /// <summary>
     /// 隣のフォルダを開く。1枚表示ならその画像を出し、一覧なら一覧のまま中身を入れ替える。
     /// （OpenPath と違って、フォルダでも一覧には切り替えない）
+    /// フォルダの一覧（列挙と並べ替え）は裏で作る。ファイル数の多いフォルダやネットワークドライブでも画面を止めない。
+    /// 作っている間は、今のフォルダの画像を出したまま（_folderBusy なので、続けてフォルダは移れない）。
     /// </summary>
-    private void OpenSiblingFolder(string folder, bool selectLast)
+    private async Task OpenSiblingFolderAsync(string folder, bool selectLast)
     {
-        bool opened;
+        int version = _openVersion;
+        var key = _navigator.SortKey;
+        bool descending = _navigator.SortDescending;
+
+        FolderListing listing;
         try
         {
-            opened = _navigator.OpenDirectory(folder, selectLast);
+            listing = await Task.Run(() => FolderNavigator.ListFolder(folder, key, descending));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -844,7 +850,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!opened)
+        if (version != _openVersion)
+        {
+            return; // 作っている間に、別のファイル・フォルダが開かれた（ドロップや2回目の起動など）
+        }
+
+        if (!_navigator.OpenListing(listing, selectLast))
         {
             ShowNotice($"表示できる画像がありませんでした：{Path.GetFileName(folder)}");
             return;
@@ -852,7 +863,7 @@ public partial class MainWindow : Window
 
         StopSlideshow();
         _openVersion++;          // 開いたファイルの一覧を作っている途中なら、もう使わない
-        _listingPending = false; // OpenDirectory は一覧まで作り終えている
+        _listingPending = false; // 一覧は作り終えている
         _rescanAfterListing = false;
         _folderWatcher.Watch(_navigator.CurrentDirectory);
         _cache.Clear();

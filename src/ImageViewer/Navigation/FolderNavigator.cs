@@ -250,17 +250,29 @@ public sealed class FolderNavigator
     public bool OpenDirectory(string directoryPath, bool selectLast = false)
     {
         var fullPath = Path.GetFullPath(directoryPath);
-        var files = EnumerateImages(fullPath);
-        if (files.Count == 0)
+        return OpenListing(ListFolder(fullPath, SortKey, SortDescending), selectLast);
+    }
+
+    /// <summary>
+    /// 裏で作ったフォルダの一覧（<see cref="ListFolder"/>）で開き、先頭の画像を選択する（selectLast なら最後の画像）。
+    /// 作っている間に並び順が変えられていたら、今の並び順で並べ直す。画像が1枚も無ければ何もせず false。
+    /// </summary>
+    public bool OpenListing(FolderListing listing, bool selectLast = false)
+    {
+        if (listing.Files.Count == 0)
         {
             return false;
         }
 
-        Sort(files);
+        var files = new List<string>(listing.Files);
+        if (listing.SortKey != SortKey || listing.SortDescending != SortDescending)
+        {
+            Sort(files);
+        }
 
         _files = files;
         _index = selectLast ? files.Count - 1 : 0;
-        _directory = Path.TrimEndingDirectorySeparator(fullPath);
+        _directory = Path.TrimEndingDirectorySeparator(listing.Directory);
         _removedCurrent = null;
         return true;
     }

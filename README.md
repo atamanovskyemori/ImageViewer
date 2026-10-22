@@ -51,7 +51,8 @@ src/ImageViewer/
     ThumbnailItem.cs          一覧の1枚 / 1行
     ThumbnailLayout.cs        大きさ・何列か・見えている行・選択移動の計算
   Metadata/
-    ExifReader.cs             EXIF を読む（JPEG / TIFF / PNG / WebP の入れ物から TIFF 構造を探して読む）
+    ExifReader.cs             EXIF を読む（JPEG / TIFF / PNG / WebP / HEIF の入れ物から TIFF 構造を探して読む）
+    HeifReader.cs             HEIF（HEIC / AVIF）の箱から、EXIF・主画像の大きさ・回転を読む
     ExifData.cs               読んだタグ・タグ番号・有理数
     ExifFormat.cs             値を表示用の文字列にする（F値・シャッター速度・GPS など）
     ImageInfo.cs              情報パネルに出す行を作る
@@ -129,7 +130,7 @@ vcpkg install libwebp:x64-windows
 - OS にコーデック（Microsoft Store の「HEIF 画像拡張機能」「AV1 Video Extension」など）が入っていれば表示できる
 - 入っていなければ「表示できません」と出し、拡張機能が必要なことも添える（一覧では「×」）
 - EXIF の向きはコーデック側で反映される前提で、自分では回さない
-- 情報パネルは「ファイル」の欄だけ（EXIF を自前で読めないので）
+- 情報パネルには、HEIC / AVIF なら EXIF（撮影日時・機種・位置情報など）も出す。ピクセル数は、コーデックが無くてもファイルの中の大きさ（ispe）と回転（irot）から出す。JPEG XL は「ファイル」の欄だけ
 
 ## アニメーション（GIF / WebP）
 
@@ -282,7 +283,7 @@ Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に
   - ほかのカスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
 - PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
-- EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク）。HEIC などは「ファイル」の欄だけ
+- EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク、HEIC / AVIF の meta 箱の中の Exif アイテム）。JPEG XL などは「ファイル」の欄だけ
 - 読むのはヘッダとメタデータだけで、画像はデコードしない。裏のスレッドで読むので、表示は待たせない
 - 壊れた EXIF（範囲外のオフセット・ループする IFD・ありえない個数など）でも止まらず、読めた分だけ出す
 - 書き込みは一切しない

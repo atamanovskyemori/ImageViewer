@@ -12,6 +12,7 @@ namespace ImageViewer.Metadata;
 /// <item>TIFF：ファイル全体が TIFF</item>
 /// <item>PNG：eXIf チャンク</item>
 /// <item>WebP：EXIF チャンク</item>
+/// <item>HEIF（HEIC / AVIF）：meta 箱の中の Exif アイテム（<see cref="HeifReader"/>）</item>
 /// </list>
 /// 壊れたデータ（範囲外のオフセット、ループする IFD、ありえない個数）でも例外は投げず、読めた分だけ返す。
 /// 読むのは IFD0・Exif IFD・GPS IFD だけ（サムネイル用の IFD1 やメーカー独自の情報は読まない）。
@@ -58,6 +59,11 @@ public static class ExifReader
             if (header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8))
             {
                 return ReadBlock(FindWebPExif(stream));
+            }
+
+            if (HeifReader.IsHeif(header))
+            {
+                return ReadBlock(HeifReader.Read(stream)?.Exif);
             }
 
             if (header[..4].SequenceEqual("II*\0"u8) || header[..4].SequenceEqual("MM\0*"u8))

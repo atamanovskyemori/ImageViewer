@@ -101,6 +101,7 @@ public static class ImageInfoLoader
         WebP,
         Ico,
         JpegXr,
+        Heif,
     }
 
     private static ImageKind Detect(ReadOnlySpan<byte> h)
@@ -113,6 +114,7 @@ public static class ImageInfoLoader
         if (h.Length >= 12 && h[..4].SequenceEqual("RIFF"u8) && h[8..12].SequenceEqual("WEBP"u8)) return ImageKind.WebP;
         if (h.Length >= 4 && h[0] == 0 && h[1] == 0 && h[2] == 1 && h[3] == 0) return ImageKind.Ico;
         if (h.Length >= 3 && h[0] == 'I' && h[1] == 'I' && h[2] == 0xBC) return ImageKind.JpegXr;
+        if (HeifReader.IsHeif(h)) return ImageKind.Heif;
         return ImageKind.Unknown;
     }
 
@@ -131,6 +133,12 @@ public static class ImageInfoLoader
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // WIC が対応していない（WebP 拡張機能が無いなど）
+        }
+
+        // HEIF は、OS にコーデックが無くても、ファイルの中に書いてある大きさ（ispe）と回転（irot）から分かる
+        if (kind == ImageKind.Heif && HeifReader.Read(stream) is { Width: { } heifWidth, Height: { } heifHeight } heif)
+        {
+            return heif.Rotation is 90 or 270 ? (heifHeight, heifWidth, 1) : (heifWidth, heifHeight, 1);
         }
 
         if (kind == ImageKind.WebP && LibWebP.IsAvailable)
@@ -169,6 +177,7 @@ public static class ImageInfoLoader
         ImageKind.WebP => WebPAnimationDecoder.IsAnimatedWebP(header) ? "WebP（アニメーション）" : "WebP",
         ImageKind.Ico => "ICO",
         ImageKind.JpegXr => "JPEG XR",
+        ImageKind.Heif => HeifReader.BrandOf(header) is "avif" or "avis" ? "AVIF" : "HEIC",
         _ => Path.GetExtension(path).TrimStart('.').ToUpperInvariant() is { Length: > 0 } ext ? ext : "不明",
     };
 }

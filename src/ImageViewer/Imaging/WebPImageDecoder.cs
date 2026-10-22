@@ -22,7 +22,7 @@ public sealed class WebPImageDecoder : IImageDecoder
         && header.Slice(8, 4).SequenceEqual("WEBP"u8);
 
     // 縮めて読むのは WIC だけ（ここに来るのは OS に WebP 拡張機能が無いときだけなので）
-    public DecodedImage Decode(byte[] data, int maxPixelSize) => new(DecodeBitmap(data));
+    public DecodedImage Decode(byte[] data, int maxPixelSize, Action<DecodedImage>? firstFrame = null) => new(DecodeBitmap(data));
 
     /// <summary>静止画の WebP を BitmapSource（Freeze 済み）にする。サムネイル作成からも使う。</summary>
     public static unsafe BitmapSource DecodeBitmap(byte[] data)

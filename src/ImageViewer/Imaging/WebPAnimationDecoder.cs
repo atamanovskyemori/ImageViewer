@@ -38,7 +38,7 @@ public sealed class WebPAnimationDecoder : IImageDecoder
         && (header[Vp8xFlagsOffset] & AnimationFlag) != 0;
 
     // アニメーションは縮めない（メモリは AnimationMaxMB で抑える）
-    public unsafe DecodedImage Decode(byte[] data, int maxPixelSize)
+    public unsafe DecodedImage Decode(byte[] data, int maxPixelSize, Action<DecodedImage>? firstFrame = null)
     {
         // デコーダは data をコピーせずに参照するので、Delete するまで fixed で止めておく
         fixed (byte* src = data)
@@ -47,7 +47,7 @@ public sealed class WebPAnimationDecoder : IImageDecoder
             var decoder = CreateDecoder(&webpData);
             try
             {
-                return DecodeFrames(decoder);
+                return DecodeFrames(decoder, firstFrame);
             }
             finally
             {
@@ -145,7 +145,7 @@ public sealed class WebPAnimationDecoder : IImageDecoder
         return bitmap;
     }
 
-    private DecodedImage DecodeFrames(IntPtr decoder)
+    private DecodedImage DecodeFrames(IntPtr decoder, Action<DecodedImage>? firstFrame)
     {
         var (width, height, info) = ReadInfo(decoder);
 
@@ -166,6 +166,12 @@ public sealed class WebPAnimationDecoder : IImageDecoder
             if (!fits)
             {
                 break; // 上限を超えるので1コマ目だけ
+            }
+
+            // 残りのコマを読む前に、1コマ目だけ先に見せる
+            if (frames.Count == 1 && info.FrameCount > 1)
+            {
+                firstFrame?.Invoke(new DecodedImage(bitmap, AnimationLimits.LoadingFramesNotice((int)info.FrameCount)));
             }
         }
 

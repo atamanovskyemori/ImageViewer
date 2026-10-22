@@ -23,6 +23,9 @@ public static class AnimationLimits
     public static long EstimateBytes(int canvasWidth, int canvasHeight, int frameCount) =>
         (long)canvasWidth * canvasHeight * 4 * frameCount;
 
+    /// <summary>1コマ目だけ先に見せている間の、ステータスバー用の説明</summary>
+    public static string LoadingFramesNotice(int frameCount) => $"コマを読み込み中…（全 {frameCount} コマ）";
+
     /// <summary>上限を超えて1枚目だけにしたときの、ステータスバー用の説明</summary>
     public static string TooLargeNotice(long requiredBytes, long maxBytes) =>
         $"アニメ省略（{ToMB(requiredBytes)}MB > 上限 {ToMB(maxBytes)}MB）";

@@ -25,5 +25,9 @@ public interface IImageDecoder
     /// 長い辺がこれを大きく超える静止画は、ここまで縮めて読んでいい（0 なら元の大きさ）。
     /// 縮めたときも <see cref="DecodedImage.PixelWidth"/> などは元の大きさにすること。縮められないデコーダは無視していい
     /// </param>
-    DecodedImage Decode(byte[] data, int maxPixelSize);
+    /// <param name="firstFrame">
+    /// アニメーションで、1コマ目ができた時点で呼ぶ（全コマを作り終える前に、1コマ目だけ先に見せるため）。
+    /// 渡すのは Freeze 済みの静止画。バックグラウンドスレッドから呼ぶ。静止画のデコーダは呼ばなくていい
+    /// </param>
+    DecodedImage Decode(byte[] data, int maxPixelSize, Action<DecodedImage>? firstFrame = null);
 }

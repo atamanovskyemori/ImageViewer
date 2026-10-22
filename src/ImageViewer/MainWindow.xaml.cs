@@ -554,10 +554,25 @@ public partial class MainWindow : Window
         // 画面よりずっと大きい画像は、画面の大きさに縮めて読む（拡大したら EnsureResolution で読み直す）
         _cache.MaxPixelSize = MonitorLongSide();
         var loadTask = _cache.GetAsync(path);
+        var firstFrameTask = _cache.GetFirstFrameAsync(path);
         UpdatePrefetch(path);
 
         try
         {
+            // アニメーションは、全コマを作り終える前に1コマ目だけ先に見せる（大きい・コマ数の多いものは待たされるので）
+            bool showingFirstFrame = false;
+            if (!loadTask.IsCompleted
+                && await Task.WhenAny((Task)loadTask, firstFrameTask) == firstFrameTask
+                && firstFrameTask.Result is { } firstFrame
+                && version == _loadVersion
+                && !loadTask.IsCompleted)
+            {
+                HideMessage();
+                SetImage(firstFrame, path); // ステータスバーには「コマを読み込み中…」と出る
+                UpdateStatus();
+                showingFirstFrame = true;
+            }
+
             var image = await loadTask;
             if (version != _loadVersion)
             {
@@ -565,8 +580,15 @@ public partial class MainWindow : Window
             }
 
             HideMessage();
-            SetImage(image, path);
-            ScheduleSlide();
+            if (showingFirstFrame && string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                ReplaceFirstFrame(image);
+            }
+            else
+            {
+                SetImage(image, path);
+            }
+            ScheduleSlide(); // スライドショーの時間は、全コマができて再生が始まってから数える
         }
         catch (OperationCanceledException)
         {
@@ -1518,6 +1540,24 @@ public partial class MainWindow : Window
     }
 
     private void ViewLockButton_Click(object sender, RoutedEventArgs e) => ToggleViewLock();
+
+    /// <summary>
+    /// 先に見せていた1コマ目を、全コマそろったアニメーションに差し替えて再生を始める。
+    /// どのコマもキャンバス全体の大きさなので、見ている間に変えたズーム・位置・回転はそのまま残す。
+    /// </summary>
+    private void ReplaceFirstFrame(DecodedImage image)
+    {
+        if (_image is null || image.PixelWidth != _image.PixelWidth || image.PixelHeight != _image.PixelHeight)
+        {
+            SetImage(image, _bitmapPath); // 大きさが違う（ふつうは無い）。いつもどおり出し直す
+            return;
+        }
+
+        _image = image;
+        _bitmap = image.Image;
+        ImageView.Source = image.Image;
+        _player.Load(image);
+    }
 
     /// <summary>
     /// 等倍（1.0）・回転なしのときの Image のサイズを、DPIを考慮して設定する。

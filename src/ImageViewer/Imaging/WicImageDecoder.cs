@@ -33,7 +33,7 @@ public sealed class WicImageDecoder : IImageDecoder
     // WICは中身を見て自分で判断するので、とりあえず何でも試す
     public bool CanDecode(ReadOnlySpan<byte> header) => true;
 
-    public DecodedImage Decode(byte[] data, int maxPixelSize)
+    public DecodedImage Decode(byte[] data, int maxPixelSize, Action<DecodedImage>? firstFrame = null)
     {
         using var stream = new MemoryStream(data, writable: false);
 
@@ -57,7 +57,7 @@ public sealed class WicImageDecoder : IImageDecoder
         // アニメーションGIF（メタデータもここで読むので、stream を閉じる前に処理する）
         if (decoder is GifBitmapDecoder && decoder.Frames.Count > 1)
         {
-            return GifAnimation.Decode(decoder, _maxAnimationBytes);
+            return GifAnimation.Decode(decoder, _maxAnimationBytes, firstFrame);
         }
 
         BitmapFrame frame = decoder.Frames[0];

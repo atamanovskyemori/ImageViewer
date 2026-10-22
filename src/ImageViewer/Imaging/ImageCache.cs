@@ -67,6 +67,16 @@ public sealed class ImageCache
     }
 
     /// <summary>
+    /// アニメーションの1コマ目を、全コマができる前に受け取る（<see cref="GetAsync"/> の後に呼ぶ）。
+    /// 1コマ目ができた時点で、その静止画を返す。静止画・読み終わった後・キャッシュに無いときは null を返す。
+    /// 先読みで読み始めていたものでも受け取れる。失敗やキャンセルでも例外にはならない。
+    /// </summary>
+    public Task<DecodedImage?> GetFirstFrameAsync(string path) =>
+        _entries.TryGetValue(path, out var entry) && !entry.Task.IsCompleted
+            ? entry.FirstFrame
+            : Task.FromResult<DecodedImage?>(null);
+
+    /// <summary>
     /// 先読みを予約する。すでにキャッシュにあれば何もしない。
     /// 先読み済みの合計が上限に達している（またはこの画像を足すと超えると分かっている）ときも何もしない。
     /// </summary>
@@ -170,7 +180,7 @@ public sealed class ImageCache
             entry.Task = Task.Run(() =>
             {
                 entry.MarkStarted();
-                return _loader.Load(path, maxPixelSize);
+                return _loader.Load(path, maxPixelSize, entry.SetFirstFrame);
             });
         }
         else
@@ -183,7 +193,7 @@ public sealed class ImageCache
                 {
                     token.ThrowIfCancellationRequested();
                     entry.MarkStarted();
-                    return _loader.Load(path, maxPixelSize);
+                    return _loader.Load(path, maxPixelSize, entry.SetFirstFrame);
                 }
                 finally
                 {
@@ -191,6 +201,9 @@ public sealed class ImageCache
                 }
             }, token);
         }
+
+        // 読み終わったら（失敗・キャンセルでも）、1コマ目を待っている側を待たせたままにしない
+        entry.Task.ContinueWith(_ => entry.SetFirstFrame(null), TaskScheduler.Default);
 
         _entries[path] = entry;
         return entry;
@@ -215,6 +228,15 @@ public sealed class ImageCache
         public CancellationTokenSource Cancellation { get; } = new();
 
         public Task<DecodedImage> Task { get; set; } = null!;
+
+        // アニメーションの1コマ目（全コマができる前に先に見せる）。静止画・読み終わった後は null で終わる
+        private readonly TaskCompletionSource<DecodedImage?> _firstFrame =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<DecodedImage?> FirstFrame => _firstFrame.Task;
+
+        /// <summary>1コマ目ができた（デコーダから、裏のスレッドで呼ばれる）。最初の1回だけ効く</summary>
+        public void SetFirstFrame(DecodedImage? image) => _firstFrame.TrySetResult(image);
 
         /// <summary>デコードが始まったか（バックグラウンドで書き込み、UIスレッドで読む）</summary>
         public bool HasStarted => Volatile.Read(ref _started) != 0;

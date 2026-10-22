@@ -14,7 +14,8 @@ public static class GifAnimation
     /// アニメーションGIFをデコードする。
     /// 全コマを合成したときのメモリが maxBytes を超えるなら、1コマ目だけの静止画にする。
     /// </summary>
-    public static DecodedImage Decode(BitmapDecoder decoder, long maxBytes)
+    /// <param name="firstFrame">1コマ目を合成した時点で呼ぶ（残りのコマを合成する前に、先に見せるため）。1コマ目だけにするときは呼ばない</param>
+    public static DecodedImage Decode(BitmapDecoder decoder, long maxBytes, Action<DecodedImage>? firstFrame = null)
     {
         var frames = decoder.Frames;
         var infos = frames.Select(ReadFrameInfo).ToList();
@@ -57,6 +58,11 @@ public static class GifAnimation
                 canvasWidth, canvasHeight, 96, 96, PixelFormats.Bgra32, null, canvas, composer.Stride);
             bitmap.Freeze();
             result.Add(new AnimationFrame(bitmap, AnimationLimits.NormalizeDelay(info.Delay)));
+
+            if (i == 0 && count > 1)
+            {
+                firstFrame?.Invoke(new DecodedImage(bitmap, AnimationLimits.LoadingFramesNotice(count)));
+            }
         }
 
         if (!fits)

@@ -36,7 +36,7 @@ namespace ImageViewer.Tests.Imaging
             public string Name => "fail";
             public bool IsAvailable => true;
             public bool CanDecode(ReadOnlySpan<byte> header) => true;
-            public DecodedImage Decode(byte[] data, int maxPixelSize) => throw new NotSupportedException("no codec");
+            public DecodedImage Decode(byte[] data, int maxPixelSize, Action<DecodedImage>? firstFrame = null) => throw new NotSupportedException("no codec");
         }
 
         private string LoadError(string fileName)

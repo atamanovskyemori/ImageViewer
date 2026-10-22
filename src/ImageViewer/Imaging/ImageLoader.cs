@@ -28,7 +28,7 @@ public sealed class ImageLoader : IImageLoader
         new WebPImageDecoder(),
     ]);
 
-    public DecodedImage Load(string path, int maxPixelSize = 0)
+    public DecodedImage Load(string path, int maxPixelSize = 0, Action<DecodedImage>? firstFrame = null)
     {
         byte[] data;
         try
@@ -50,7 +50,7 @@ public sealed class ImageLoader : IImageLoader
 
             try
             {
-                return decoder.Decode(data, maxPixelSize);
+                return decoder.Decode(data, maxPixelSize, firstFrame);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {

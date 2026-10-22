@@ -25,6 +25,80 @@ namespace ImageViewer.Tests.Imaging
         public void Cleanup() => _loader.ReleaseAll();
 
         [TestMethod]
+        public async Task First_Frame_Arrives_Before_The_Whole_Animation()
+        {
+            var cache = new ImageCache(_loader);
+            var first = CreateImage(4, 4);
+            var whole = CreateImage(4, 4);
+            var release = _loader.Register("A", whole, firstFrame: first);
+
+            var loadTask = cache.GetAsync("A");
+            var firstFrame = await cache.GetFirstFrameAsync("A").WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.AreSame(first, firstFrame);
+            Assert.IsFalse(loadTask.IsCompleted, "the whole animation is still loading");
+
+            release.Set();
+            Assert.AreSame(whole, await loadTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
+        [TestMethod]
+        public async Task Still_Image_Gives_No_First_Frame()
+        {
+            var cache = new ImageCache(_loader);
+            var release = _loader.Register("A", CreateImage(4, 4));
+
+            _ = cache.GetAsync("A");
+            var firstFrameTask = cache.GetFirstFrameAsync("A");
+            Assert.IsFalse(firstFrameTask.IsCompleted, "still waiting while loading");
+
+            release.Set();
+            Assert.IsNull(await firstFrameTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
+        [TestMethod]
+        public async Task Failed_Load_Does_Not_Leave_First_Frame_Waiting()
+        {
+            var cache = new ImageCache(_loader);
+            var release = _loader.Register("A", CreateImage(4, 4));
+            _loader.FailNext("A");
+
+            var loadTask = cache.GetAsync("A");
+            var firstFrameTask = cache.GetFirstFrameAsync("A");
+            release.Set();
+
+            await Assert.ThrowsExactlyAsync<ImageLoadException>(() => loadTask);
+            Assert.IsNull(await firstFrameTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
+        [TestMethod]
+        public async Task First_Frame_Of_A_Running_Prefetch_Is_Shared()
+        {
+            var cache = new ImageCache(_loader);
+            var first = CreateImage(4, 4);
+            var release = _loader.Register("A", CreateImage(4, 4), firstFrame: first);
+
+            cache.Prefetch("A");
+            await WaitUntil(() => _loader.GetCount("A") == 1);
+            _ = cache.GetAsync("A"); // joins the running prefetch
+
+            Assert.AreSame(first, await cache.GetFirstFrameAsync("A").WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.AreEqual(1, _loader.GetCount("A"), "not loaded twice");
+            release.Set();
+        }
+
+        [TestMethod]
+        public async Task Already_Loaded_Image_Gives_No_First_Frame()
+        {
+            var cache = new ImageCache(_loader);
+            _loader.Register("A", CreateImage(4, 4), firstFrame: CreateImage(4, 4)).Set();
+            await cache.GetAsync("A");
+
+            Assert.IsNull(await cache.GetFirstFrameAsync("A"));
+            Assert.IsNull(await cache.GetFirstFrameAsync("not cached"));
+        }
+
+        [TestMethod]
         public async Task MaxPixelSize_Is_Passed_To_Loader()
         {
             var cache = new ImageCache(_loader) { MaxPixelSize = 1920 };
@@ -282,16 +356,20 @@ namespace ImageViewer.Tests.Imaging
             {
                 public ManualResetEventSlim Event { get; } = new(false);
                 public DecodedImage? Result { get; init; }
+                public DecodedImage? FirstFrame { get; init; }
                 public int Count;
                 public int FailNext;
             }
 
             private readonly ConcurrentDictionary<string, Entry> _map = new(StringComparer.OrdinalIgnoreCase);
 
-            /// <summary>Registers a path. Load blocks until the returned event is set, then returns result.</summary>
-            public ManualResetEventSlim Register(string path, DecodedImage? result = null)
+            /// <summary>
+            /// Registers a path. Load reports firstFrame (if any) right away, then blocks until the returned event is set,
+            /// then returns result.
+            /// </summary>
+            public ManualResetEventSlim Register(string path, DecodedImage? result = null, DecodedImage? firstFrame = null)
             {
-                var entry = new Entry { Result = result };
+                var entry = new Entry { Result = result, FirstFrame = firstFrame };
                 _map[path] = entry;
                 return entry.Event;
             }
@@ -312,7 +390,7 @@ namespace ImageViewer.Tests.Imaging
 
             public int LastMaxPixelSize;
 
-            public DecodedImage Load(string path, int maxPixelSize = 0)
+            public DecodedImage Load(string path, int maxPixelSize = 0, Action<DecodedImage>? firstFrame = null)
             {
                 Volatile.Write(ref LastMaxPixelSize, maxPixelSize);
                 if (!_map.TryGetValue(path, out var e))
@@ -322,6 +400,11 @@ namespace ImageViewer.Tests.Imaging
                 }
 
                 Interlocked.Increment(ref e.Count);
+
+                if (e.FirstFrame is { } first)
+                {
+                    firstFrame?.Invoke(first);
+                }
 
                 // Block until signaled to simulate long decode
                 e.Event.Wait();

@@ -100,6 +100,43 @@ namespace ImageViewer.Tests.Imaging
             Assert.IsFalse(image.IsReduced);
         }
 
+        private static byte[] AnimatedGif(int frames)
+        {
+            var encoder = new GifBitmapEncoder();
+            for (int i = 0; i < frames; i++)
+            {
+                var bitmap = new FormatConvertedBitmap(CreateBitmap(40, 30), PixelFormats.Indexed8, BitmapPalettes.WebPalette, 0);
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            }
+            using var stream = new MemoryStream();
+            encoder.Save(stream);
+            return stream.ToArray();
+        }
+
+        [TestMethod]
+        public void Animated_Gif_Reports_The_First_Frame_Before_Finishing()
+        {
+            DecodedImage? first = null;
+            var image = Decoder.Decode(AnimatedGif(3), maxPixelSize: 0, firstFrame: f => first ??= f);
+
+            Assert.IsTrue(image.IsAnimated);
+            Assert.IsNotNull(first);
+            Assert.IsFalse(first.IsAnimated);
+            Assert.IsTrue(first.Image.IsFrozen);
+            Assert.AreEqual(image.PixelWidth, first.PixelWidth);
+            Assert.AreEqual(image.PixelHeight, first.PixelHeight);
+            StringAssert.Contains(first.Notice, "3");
+        }
+
+        [TestMethod]
+        public void Still_Image_Does_Not_Report_A_First_Frame()
+        {
+            bool called = false;
+            Decoder.Decode(Jpeg(40, 30), maxPixelSize: 0, firstFrame: _ => called = true);
+
+            Assert.IsFalse(called);
+        }
+
         [TestMethod]
         public void Reduced_Image_Applies_Exif_Orientation_And_Reports_Rotated_Size()
         {

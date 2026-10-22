@@ -404,13 +404,26 @@ public partial class MainWindow : Window
         int version = _openVersion;
         var key = _navigator.SortKey;
         bool descending = _navigator.SortDescending;
+        var loadedStamps = _cache.LoadedStamps();
+        var thumbnailCache = _thumbnailCache;
 
         FolderListing listing;
+        HashSet<string> changedImages, changedThumbnails;
         try
         {
-            // 明示的に開いた対応外のファイルも、まだあれば一覧に残す
-            listing = await Task.Run(() => FolderNavigator.ListFolder(
-                folder, key, descending, alsoInclude: File.Exists(current) ? current : null));
+            (listing, changedImages, changedThumbnails) = await Task.Run(() =>
+            {
+                // 明示的に開いた対応外のファイルも、まだあれば一覧に残す
+                var list = FolderNavigator.ListFolder(folder, key, descending, alsoInclude: File.Exists(current) ? current : null);
+
+                // 同じ名前のまま書き換わった画像（更新日時かサイズが変わった）。読み直すために捨てる
+                var images = loadedStamps
+                    .Where(s => FileStamp.Of(s.Path) is { } now && now != s.Stamp)
+                    .Select(s => s.Path)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var thumbnails = (thumbnailCache?.ForgetChanged() ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return (list, images, thumbnails);
+            });
         }
         catch (Exception ex)
         {
@@ -424,7 +437,13 @@ public partial class MainWindow : Window
             return; // 作っている間に別のフォルダを開いた
         }
 
-        bool wasAtLast = _navigator.Index == _navigator.Count - 1;
+        foreach (var path in changedImages)
+        {
+            _cache.Forget(path);
+        }
+
+        // 新しい画像が入る側の端を見ていたか。昇順なら最後、降順（更新日時の新しい順など）なら先頭に入る
+        bool wasAtNewEnd = descending ? _navigator.Index == 0 : _navigator.Index == _navigator.Count - 1;
         if (!_navigator.ApplyListing(listing, keepMissingCurrent: !_thumbnailMode))
         {
             return;
@@ -432,19 +451,56 @@ public partial class MainWindow : Window
 
         if (_thumbnailMode)
         {
-            ThumbnailView.SetFiles(_navigator.Files, _navigator.Index);
+            // スクロールの位置はそのまま。書き換わった画像だけサムネイルを作り直す
+            ThumbnailView.UpdateFiles(_navigator.Files, _navigator.Index, changedThumbnails);
         }
-        else if (wasAtLast && !_slideshow && _navigator.Index < _navigator.Count - 1)
+        else if (wasAtNewEnd && !_slideshow && (descending ? _navigator.Index > 0 : _navigator.Index < _navigator.Count - 1))
         {
-            // 最後の画像を見ていて、その後ろに画像が増えた（生成中の出力フォルダなど）。新しい最後の画像へ
-            Navigate(_navigator.MoveLast(), +1);
+            // 端の画像を見ていて、その外側に画像が増えた（生成中の出力フォルダなど）。新しい端の画像へ
+            Navigate(descending ? _navigator.MoveFirst() : _navigator.MoveLast(), descending ? -1 : +1);
             return;
         }
         else if (_navigator.Current is { } now)
         {
+            if (_bitmapPath is { } shown && changedImages.Contains(shown))
+            {
+                _ = ReloadShownImageAsync(shown); // 見ている画像が書き換わった
+            }
             UpdatePrefetch(now); // 前後の画像が変わったかもしれない
         }
 
+        if (changedImages.Count > 0 || changedThumbnails.Count > 0)
+        {
+            _infoPath = null; // 情報も読み直す（UpdateStatus から）
+        }
+        UpdateStatus();
+    }
+
+    /// <summary>
+    /// 見ている画像が同じ名前のまま書き換わったので、読み直して差し替える。ズーム・位置・回転はそのまま。
+    /// 読めなかったら（まだ書き込み中など）、前の画像を出したまま
+    /// </summary>
+    private async Task ReloadShownImageAsync(string path)
+    {
+        int version = _loadVersion;
+        DecodedImage image;
+        try
+        {
+            _cache.MaxPixelSize = MonitorLongSide();
+            image = await _cache.GetAsync(path);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return;
+        }
+
+        if (version != _loadVersion || !string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return; // 読んでいる間に別の画像へ移った
+        }
+
+        ReplaceImageKeepingView(image);
         UpdateStatus();
     }
 
@@ -582,7 +638,7 @@ public partial class MainWindow : Window
             HideMessage();
             if (showingFirstFrame && string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
             {
-                ReplaceFirstFrame(image);
+                ReplaceImageKeepingView(image);
             }
             else
             {
@@ -1542,21 +1598,27 @@ public partial class MainWindow : Window
     private void ViewLockButton_Click(object sender, RoutedEventArgs e) => ToggleViewLock();
 
     /// <summary>
-    /// 先に見せていた1コマ目を、全コマそろったアニメーションに差し替えて再生を始める。
-    /// どのコマもキャンバス全体の大きさなので、見ている間に変えたズーム・位置・回転はそのまま残す。
+    /// 表示中の画像を、ズーム・位置・回転はそのままに差し替える（アニメーションなら再生を始める）。
+    /// <list type="bullet">
+    /// <item>先に見せていた1コマ目を、全コマそろったアニメーションに差し替えるとき（どのコマもキャンバス全体の大きさ）</item>
+    /// <item>見ている画像が同じ名前のまま書き換わって、読み直したとき</item>
+    /// </list>
+    /// 大きさが違ったら、いつもどおり出し直す（見え方は合わないので）。
     /// </summary>
-    private void ReplaceFirstFrame(DecodedImage image)
+    private void ReplaceImageKeepingView(DecodedImage image)
     {
         if (_image is null || image.PixelWidth != _image.PixelWidth || image.PixelHeight != _image.PixelHeight)
         {
-            SetImage(image, _bitmapPath); // 大きさが違う（ふつうは無い）。いつもどおり出し直す
+            SetImage(image, _bitmapPath);
             return;
         }
 
         _image = image;
         _bitmap = image.Image;
+        _fullResolutionPath = null; // 縮めて読んだものなら、拡大していれば元の大きさで読み直す（ApplyTransform から）
         ImageView.Source = image.Image;
         _player.Load(image);
+        ApplyTransform();
     }
 
     /// <summary>

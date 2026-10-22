@@ -138,6 +138,36 @@ public sealed class ThumbnailCache
         }
     }
 
+    /// <summary>
+    /// 持っているサムネイルのうち、ファイルが書き換わった（更新日時かサイズが変わった・消えた）ものを捨てて、そのパスを返す。
+    /// ファイルを見に行くので、裏のスレッドから呼ぶ。<see cref="Invalidate"/> と違って、変わっていないものはそのまま使える
+    /// </summary>
+    public IReadOnlyList<string> ForgetChanged()
+    {
+        List<Entry> snapshot;
+        lock (_lock)
+        {
+            snapshot = _lru.ToList();
+        }
+
+        // ファイルを見に行くのは、ロックの外で
+        var changed = snapshot.Where(e => e.Stamp is null || _stampOf(e.Path) != e.Stamp).ToList();
+
+        lock (_lock)
+        {
+            foreach (var entry in changed)
+            {
+                if (_entries.TryGetValue(entry.Path, out var node) && ReferenceEquals(node.Value, entry))
+                {
+                    _entries.Remove(entry.Path);
+                    _lru.Remove(node);
+                    _bytes -= entry.Bytes;
+                }
+            }
+        }
+        return changed.Select(e => e.Path).ToList();
+    }
+
     public void Clear()
     {
         lock (_lock)

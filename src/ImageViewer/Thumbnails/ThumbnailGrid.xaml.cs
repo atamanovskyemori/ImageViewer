@@ -120,6 +120,49 @@ public partial class ThumbnailGrid : UserControl
         RebuildRows();
     }
 
+    /// <summary>
+    /// 同じフォルダの中身が変わったとき（画像が増えた・消えた・書き換わった）に一覧を入れ替える。
+    /// <see cref="SetFiles"/> と違って、スクロールの位置はそのまま（選んだ画像まで戻さない）。
+    /// 変わっていない画像は、持っているサムネイルをそのまま使う（作り直しの間、一瞬消えてちらつかないように）。
+    /// </summary>
+    /// <param name="changed">書き換わった画像。サムネイルを作り直す</param>
+    public void UpdateFiles(IReadOnlyList<string> files, int selectedIndex, IReadOnlySet<string> changed)
+    {
+        double? offset = _scrollViewer?.VerticalOffset;
+
+        // 前のサムネイルを、パスで引けるようにしておく（読み込み途中のものは止める）
+        var previous = new Dictionary<string, ThumbnailItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in _items)
+        {
+            item.Loading?.Cancel();
+            item.Loading = null;
+            previous.TryAdd(item.Path, item);
+        }
+        _active.Clear();
+
+        _items = files.Select((path, i) =>
+        {
+            var item = new ThumbnailItem(path, i);
+            if (!changed.Contains(path) && previous.TryGetValue(path, out var old) && (old.Image is not null || old.IsFailed))
+            {
+                item.Image = old.Image;
+                item.IsFailed = old.IsFailed;
+                _active.Add(item);
+            }
+            return item;
+        }).ToList();
+        _selectedIndex = -1;
+        _columns = 0;
+
+        if (_items.Count > 0)
+        {
+            _selectedIndex = Math.Clamp(selectedIndex, 0, _items.Count - 1);
+            _items[_selectedIndex].IsSelected = true;
+        }
+
+        RebuildRows(offset);
+    }
+
     /// <summary>空にする</summary>
     public void Clear() => SetFiles([], -1);
 
@@ -203,7 +246,8 @@ public partial class ThumbnailGrid : UserControl
         return ThumbnailLayout.Columns(available, _size);
     }
 
-    private void RebuildRows()
+    /// <param name="keepOffset">組み立てた後に戻すスクロールの位置。null なら選んだ画像が見えるところまでスクロールする</param>
+    private void RebuildRows(double? keepOffset = null)
     {
         if (_items.Count == 0)
         {
@@ -231,8 +275,20 @@ public partial class ThumbnailGrid : UserControl
         _rows = rows;
         RowList.ItemsSource = rows;
 
-        // 新しい行がレイアウトされてから、選択した画像が見えるようにする
-        Dispatcher.InvokeAsync(ScrollToSelection, DispatcherPriority.Loaded);
+        // 新しい行がレイアウトされてから、選択した画像が見えるようにする（または、前のスクロールの位置に戻す）
+        if (keepOffset is { } offset)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                _scrollViewer ??= FindDescendant<ScrollViewer>(RowList);
+                _scrollViewer?.ScrollToVerticalOffset(offset);
+                RequestRealize();
+            }, DispatcherPriority.Loaded);
+        }
+        else
+        {
+            Dispatcher.InvokeAsync(ScrollToSelection, DispatcherPriority.Loaded);
+        }
     }
 
     private void ScrollToSelection()

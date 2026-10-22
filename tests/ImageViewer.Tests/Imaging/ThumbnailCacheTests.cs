@@ -45,6 +45,55 @@ namespace ImageViewer.Tests.Imaging
         }
 
         [TestMethod]
+        public async Task ForgetChanged_Drops_Only_Changed_Thumbnails()
+        {
+            var cache = CreateCache();
+            SetStamp("A", 100);
+            SetStamp("B", 200);
+            await cache.GetAsync("A");
+            await cache.GetAsync("B");
+
+            SetStamp("B", 201); // overwritten under the same name
+            var changed = cache.ForgetChanged();
+
+            CollectionAssert.AreEqual(new[] { "B" }, changed.ToArray());
+            Assert.IsTrue(cache.GetAsync("A").IsCompleted, "unchanged one is still served right away");
+
+            await cache.GetAsync("B");
+            Assert.AreEqual(2, _decoder.GetCount("B"), "changed one is made again");
+            Assert.AreEqual(1, _decoder.GetCount("A"));
+        }
+
+        [TestMethod]
+        public async Task ForgetChanged_Drops_Thumbnails_Of_Deleted_Files()
+        {
+            var cache = CreateCache();
+            SetStamp("A", 100);
+            await cache.GetAsync("A");
+
+            lock (_stamps)
+            {
+                _stamps["A"] = null; // deleted
+            }
+
+            CollectionAssert.AreEqual(new[] { "A" }, cache.ForgetChanged().ToArray());
+            Assert.AreEqual(0, cache.Count);
+        }
+
+        [TestMethod]
+        public async Task ForgetChanged_With_Nothing_Changed_Keeps_Everything()
+        {
+            var cache = CreateCache();
+            SetStamp("A", 100);
+            await cache.GetAsync("A");
+            long bytes = cache.CurrentBytes;
+
+            Assert.AreEqual(0, cache.ForgetChanged().Count);
+            Assert.AreEqual(1, cache.Count);
+            Assert.AreEqual(bytes, cache.CurrentBytes);
+        }
+
+        [TestMethod]
         [DataRow(1, 2)]
         [DataRow(2, 2)]
         [DataRow(4, 2)]

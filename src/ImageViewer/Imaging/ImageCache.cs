@@ -148,6 +148,23 @@ public sealed class ImageCache
         }
     }
 
+    /// <summary>
+    /// 読み終わっている画像と、読み始めたときのファイルの印（更新日時とサイズ）。
+    /// 裏のスレッドで今のファイルと比べて、書き換わったものを <see cref="Forget"/> するのに使う
+    /// </summary>
+    public IReadOnlyList<(string Path, FileStamp Stamp)> LoadedStamps() =>
+        _entries
+            .Where(kv => kv.Value.Task.IsCompletedSuccessfully && kv.Value.Stamp is not null)
+            .Select(kv => (kv.Key, kv.Value.Stamp!.Value))
+            .ToList();
+
+    /// <summary>1枚だけキャッシュから捨てる（ファイルが書き換わったときなど。次に使うときに読み直す）</summary>
+    public void Forget(string path)
+    {
+        Remove(path);
+        _knownSizes.Remove(path);
+    }
+
     /// <summary>キャッシュを全部捨てる（覚えている大きさも。ファイルが更新されているかもしれないので）</summary>
     public void Clear()
     {
@@ -180,6 +197,7 @@ public sealed class ImageCache
             entry.Task = Task.Run(() =>
             {
                 entry.MarkStarted();
+                entry.Stamp = FileStamp.Of(path);
                 return _loader.Load(path, maxPixelSize, entry.SetFirstFrame);
             });
         }
@@ -193,6 +211,7 @@ public sealed class ImageCache
                 {
                     token.ThrowIfCancellationRequested();
                     entry.MarkStarted();
+                    entry.Stamp = FileStamp.Of(path);
                     return _loader.Load(path, maxPixelSize, entry.SetFirstFrame);
                 }
                 finally
@@ -228,6 +247,9 @@ public sealed class ImageCache
         public CancellationTokenSource Cancellation { get; } = new();
 
         public Task<DecodedImage> Task { get; set; } = null!;
+
+        /// <summary>読み始めたときのファイルの印（裏のスレッドで書き、読み終わってから UI スレッドで読む）</summary>
+        public FileStamp? Stamp { get; set; }
 
         // アニメーションの1コマ目（全コマができる前に先に見せる）。静止画・読み終わった後は null で終わる
         private readonly TaskCompletionSource<DecodedImage?> _firstFrame =

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ImageViewer.Imaging;
@@ -23,6 +24,36 @@ namespace ImageViewer.Tests.Imaging
 
         [TestCleanup]
         public void Cleanup() => _loader.ReleaseAll();
+
+        [TestMethod]
+        public async Task Loaded_Stamps_Tell_When_A_File_Was_Overwritten()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "ImageViewer.Tests", Guid.NewGuid().ToString("N") + ".png");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, new byte[10]);
+            try
+            {
+                var cache = new ImageCache(_loader);
+                _loader.Register(path, CreateImage(4, 4)).Set();
+                await cache.GetAsync(path);
+
+                var (stampedPath, stamp) = cache.LoadedStamps().Single();
+                Assert.AreEqual(path, stampedPath);
+                Assert.AreEqual(stamp, FileStamp.Of(path), "unchanged");
+
+                File.WriteAllBytes(path, new byte[20]); // overwritten
+                Assert.AreNotEqual(stamp, FileStamp.Of(path));
+
+                cache.Forget(path);
+                Assert.AreEqual(0, cache.LoadedStamps().Count);
+                await cache.GetAsync(path);
+                Assert.AreEqual(2, _loader.GetCount(path), "read again after Forget");
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
 
         [TestMethod]
         public async Task First_Frame_Arrives_Before_The_Whole_Animation()

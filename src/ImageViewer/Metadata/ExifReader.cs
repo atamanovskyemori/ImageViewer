@@ -370,10 +370,10 @@ public static class ExifReader
         int n = (int)count;
         switch (type)
         {
-            case 2: // ASCII（NUL まで。実際には UTF-8 で書くソフトも多いので UTF-8 として読む）
+            case 2: // ASCII（NUL まで。実際には UTF-8 や Shift_JIS で書くソフトもあるので、ExifText で読む）
             {
                 int end = Array.IndexOf(bytes, (byte)0);
-                var text = Encoding.UTF8.GetString(bytes, 0, end < 0 ? bytes.Length : end).Trim();
+                var text = ExifText.Decode(bytes.AsSpan(0, end < 0 ? bytes.Length : end)).Trim();
                 return new ExifEntry { Tag = tag, Type = type, Text = text };
             }
 

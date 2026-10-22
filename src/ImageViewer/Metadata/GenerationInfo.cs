@@ -165,8 +165,8 @@ public sealed partial class GenerationInfo
         }
         else
         {
-            // ASCII / 指定なし。実際には UTF-8 で書くソフトもあるので UTF-8 として読む
-            text = Encoding.UTF8.GetString(body);
+            // ASCII / 指定なし。実際には UTF-8 や Shift_JIS で書くソフトもあるので、ExifText で読む
+            text = ExifText.Decode(body);
         }
 
         text = text.TrimEnd('\0', ' ');

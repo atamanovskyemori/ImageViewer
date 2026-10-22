@@ -284,6 +284,7 @@ Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に
 - PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
 - EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク、HEIC / AVIF の meta 箱の中の Exif アイテム）。JPEG XL などは「ファイル」の欄だけ
+- EXIF の文字（メーカー・ソフトウェア・作者など）は、仕様では ASCII だが、UTF-8 や Shift_JIS で書くカメラ・ソフトもあるので、文字化けしないよう UTF-8 → Shift_JIS の順に読めるもので読む（決まった長さに収めるために文字の途中で切られているものは、切れた文字だけ落とす）
 - 読むのはヘッダとメタデータだけで、画像はデコードしない。裏のスレッドで読むので、表示は待たせない
 - 壊れた EXIF（範囲外のオフセット・ループする IFD・ありえない個数など）でも止まらず、読めた分だけ出す
 - 書き込みは一切しない

@@ -1,4 +1,5 @@
-﻿using System.Windows.Media;
+﻿using System.Runtime.InteropServices;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImageViewer.Interop;
 
@@ -47,7 +48,7 @@ public sealed class WebPAnimationDecoder : IImageDecoder
             var decoder = CreateDecoder(&webpData);
             try
             {
-                return DecodeFrames(decoder, firstFrame);
+                return DecodeFrames(decoder, data, firstFrame);
             }
             finally
             {
@@ -145,47 +146,139 @@ public sealed class WebPAnimationDecoder : IImageDecoder
         return bitmap;
     }
 
-    private DecodedImage DecodeFrames(IntPtr decoder, Action<DecodedImage>? firstFrame)
+    private DecodedImage DecodeFrames(IntPtr decoder, byte[] data, Action<DecodedImage>? firstFrame)
     {
         var (width, height, info) = ReadInfo(decoder);
 
+        long frameBytes = AnimationLimits.EstimateBytes(width, height, 1);
         long required = AnimationLimits.EstimateBytes(width, height, (int)info.FrameCount);
         bool fits = required <= _maxBytes;
+        bool streaming = !fits && frameBytes <= _maxBytes; // 全コマは持てないが、少しずつなら持てる
 
+        // 全コマ持つときはコマを、再生しながら作るときは表示時間だけを集める（1コマ目は、どちらでも持つ）
         var frames = new List<AnimationFrame>();
+        var delays = new List<TimeSpan>();
+        BitmapSource? first = null;
         int previousTimestamp = 0;
         while (LibWebPDemux.WebPAnimDecoderHasMoreFrames(decoder) != 0)
         {
-            var bitmap = ReadNextFrame(decoder, width, height, out int timestamp);
+            bool keep = fits || first is null;
+            BitmapSource? bitmap;
+            int timestamp;
+            if (keep)
+            {
+                bitmap = ReadNextFrame(decoder, width, height, out timestamp);
+                first ??= bitmap;
+            }
+            else
+            {
+                bitmap = null;
+                timestamp = SkipNextFrame(decoder);
+            }
 
             // timestamp は「このコマが終わる時刻」の累積なので、前との差が表示時間
-            var delay = TimeSpan.FromMilliseconds(Math.Max(0, timestamp - previousTimestamp));
+            var delay = AnimationLimits.NormalizeDelay(TimeSpan.FromMilliseconds(Math.Max(0, timestamp - previousTimestamp)));
             previousTimestamp = timestamp;
-            frames.Add(new AnimationFrame(bitmap, AnimationLimits.NormalizeDelay(delay)));
-
-            if (!fits)
+            delays.Add(delay);
+            if (bitmap is not null && fits)
             {
-                break; // 上限を超えるので1コマ目だけ
+                frames.Add(new AnimationFrame(bitmap, delay));
+            }
+
+            if (!fits && !streaming)
+            {
+                break; // キャンバス1枚すら持てないので1コマ目だけ
             }
 
             // 残りのコマを読む前に、1コマ目だけ先に見せる
-            if (frames.Count == 1 && info.FrameCount > 1)
+            if (delays.Count == 1 && info.FrameCount > 1)
             {
-                firstFrame?.Invoke(new DecodedImage(bitmap, AnimationLimits.LoadingFramesNotice((int)info.FrameCount)));
+                firstFrame?.Invoke(new DecodedImage(first!, AnimationLimits.LoadingFramesNotice((int)info.FrameCount)));
             }
         }
 
-        if (frames.Count == 0)
+        if (first is null)
         {
             throw new NotSupportedException("アニメーションWebPにコマがありません。");
         }
 
-        if (!fits)
+        // WebP の loop_count は「再生する回数」（0 = 無限）なので、そのまま使える
+        int loopCount = (int)Math.Min(info.LoopCount, int.MaxValue);
+
+        if (streaming && delays.Count > 1)
         {
-            return new DecodedImage(frames[0].Image, AnimationLimits.TooLargeNotice(required, _maxBytes));
+            int window = AnimationLimits.StreamingWindow(frameBytes, _maxBytes);
+            return new DecodedImage(
+                first, new WebPStreamingFrames(data, width, height, delays, window), loopCount,
+                byteSize: data.Length + frameBytes * window,
+                notice: AnimationLimits.StreamingNotice(required, _maxBytes));
         }
 
-        // WebP の loop_count は「再生する回数」（0 = 無限）なので、そのまま使える
-        return new DecodedImage(frames, (int)Math.Min(info.LoopCount, int.MaxValue));
+        if (!fits)
+        {
+            return new DecodedImage(first, AnimationLimits.TooLargeNotice(required, _maxBytes));
+        }
+
+        return new DecodedImage(frames, loopCount);
+    }
+
+    /// <summary>次のコマを読み飛ばして、そのコマが終わる時刻（ミリ秒、累積）だけ返す（再生しながら作るときの、表示時間を集める用）</summary>
+    private static unsafe int SkipNextFrame(IntPtr decoder)
+    {
+        byte* buffer;
+        int timestamp;
+        if (LibWebPDemux.WebPAnimDecoderGetNext(decoder, &buffer, &timestamp) == 0)
+        {
+            throw new NotSupportedException("アニメーションWebPのデコードに失敗しました。");
+        }
+        return timestamp;
+    }
+
+    /// <summary>
+    /// 再生しながらアニメーションWebP のコマを作る。WebPAnimDecoder は合成済みのコマを順に返すので、それをそのまま使う。
+    /// デコーダはファイルの中身をコピーせずに参照するので、中身をネイティブのメモリに写して、デコーダと同じだけ持っておく。
+    /// どちらも、この画像が要らなくなったとき（ファイナライザ）に片付ける。
+    /// </summary>
+    private sealed unsafe class WebPStreamingFrames : StreamingFrames
+    {
+        private readonly byte* _data;
+        private readonly nuint _size;
+        private readonly int _width;
+        private readonly int _height;
+        private IntPtr _decoder;
+
+        public WebPStreamingFrames(byte[] data, int width, int height, IReadOnlyList<TimeSpan> delays, int window)
+            : base(delays, window)
+        {
+            _size = (nuint)data.Length;
+            _data = (byte*)NativeMemory.Alloc(_size);
+            data.AsSpan().CopyTo(new Span<byte>(_data, data.Length));
+            _width = width;
+            _height = height;
+        }
+
+        ~WebPStreamingFrames()
+        {
+            if (_decoder != IntPtr.Zero)
+            {
+                LibWebPDemux.WebPAnimDecoderDelete(_decoder);
+            }
+            NativeMemory.Free(_data);
+        }
+
+        protected override void Reset()
+        {
+            if (_decoder == IntPtr.Zero)
+            {
+                var webpData = new LibWebPDemux.WebPData { Bytes = _data, Size = _size };
+                _decoder = CreateDecoder(&webpData);
+            }
+            else
+            {
+                LibWebPDemux.WebPAnimDecoderReset(_decoder);
+            }
+        }
+
+        protected override BitmapSource Produce(int index) => ReadNextFrame(_decoder, _width, _height, out _);
     }
 }

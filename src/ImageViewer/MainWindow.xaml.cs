@@ -2245,7 +2245,10 @@ public partial class MainWindow : Window
             var state = _player.IsFinished ? "（再生終了）"
                 : _player.IsPaused ? "（一時停止）"
                 : string.Empty;
-            return $"コマ {_player.FrameIndex + 1} / {_player.FrameCount}{state}";
+
+            // 再生しながらコマを作っているときは「省メモリ再生」と添える
+            var notice = _image?.Notice is { } n ? $"・{n}" : string.Empty;
+            return $"コマ {_player.FrameIndex + 1} / {_player.FrameCount}{state}{notice}";
         }
 
         // 大きすぎて1コマ目だけにした、など

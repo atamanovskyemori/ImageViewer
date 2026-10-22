@@ -6,7 +6,8 @@ namespace ImageViewer.Imaging;
 public sealed record AnimationFrame(BitmapSource Image, TimeSpan Delay);
 
 /// <summary>
-/// デコード結果。静止画なら Frames は null、アニメーションなら合成済みのコマを全部持つ。
+/// デコード結果。静止画なら Animation は null、アニメーションなら合成済みのコマを全部持つか、
+/// メモリの上限を超えるものは再生しながら作る（<see cref="Animation"/>）。
 /// 中の BitmapSource はすべて Freeze 済み（どのスレッドからでも読める）。
 /// </summary>
 public sealed class DecodedImage
@@ -39,9 +40,27 @@ public sealed class DecodedImage
         if (frames.Count > 1)
         {
             Frames = frames;
+            Animation = new FrameList(frames);
             LoopCount = Math.Max(0, loopCount);
         }
         ByteSize = frames.Sum(f => SizeOf(f.Image));
+    }
+
+    /// <summary>
+    /// 再生しながらコマを作るアニメーション（全コマを持つとメモリの上限を超えるもの。<see cref="StreamingFrames"/>）
+    /// </summary>
+    /// <param name="firstFrame">1コマ目（縦横ピクセル数・コマを作るまでの表示に使う）</param>
+    /// <param name="byteSize">持っておくメモリのおおよその量（元のファイル + 持っておくコマの分）</param>
+    /// <param name="notice">ステータスバーに出す補足（「省メモリ再生」など）</param>
+    public DecodedImage(BitmapSource firstFrame, StreamingFrames streaming, int loopCount, long byteSize, string? notice)
+    {
+        Image = firstFrame;
+        PixelWidth = firstFrame.PixelWidth;
+        PixelHeight = firstFrame.PixelHeight;
+        Animation = streaming;
+        LoopCount = Math.Max(0, loopCount);
+        ByteSize = byteSize;
+        Notice = notice;
     }
 
     /// <summary>表示用の1枚（アニメーションなら1コマ目）。縮めて読んだときは元より小さい</summary>
@@ -56,10 +75,13 @@ public sealed class DecodedImage
     /// <summary>画面に合わせて縮めて読んだか（拡大したら、元の大きさで読み直す）</summary>
     public bool IsReduced => Image.PixelWidth < PixelWidth || Image.PixelHeight < PixelHeight;
 
-    /// <summary>アニメーションのコマ（2枚以上）。静止画なら null</summary>
+    /// <summary>全コマを合成済みで持っているアニメーションのコマ（2枚以上）。静止画・再生しながら作るものは null</summary>
     public IReadOnlyList<AnimationFrame>? Frames { get; }
 
-    public bool IsAnimated => Frames is not null;
+    /// <summary>アニメーションのコマの出どころ（全コマ持っているもの・再生しながら作るもの）。静止画なら null</summary>
+    public IAnimationFrames? Animation { get; }
+
+    public bool IsAnimated => Animation is not null;
 
     /// <summary>再生する回数。0 なら無限ループ（静止画では意味なし）</summary>
     public int LoopCount { get; }

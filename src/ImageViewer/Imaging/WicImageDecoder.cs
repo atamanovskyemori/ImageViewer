@@ -57,7 +57,7 @@ public sealed class WicImageDecoder : IImageDecoder
         // アニメーションGIF（メタデータもここで読むので、stream を閉じる前に処理する）
         if (decoder is GifBitmapDecoder && decoder.Frames.Count > 1)
         {
-            return GifAnimation.Decode(decoder, _maxAnimationBytes, firstFrame);
+            return GifAnimation.Decode(decoder, data, _maxAnimationBytes, firstFrame);
         }
 
         BitmapFrame frame = decoder.Frames[0];

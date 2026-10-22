@@ -26,6 +26,17 @@ public static class AnimationLimits
     /// <summary>1コマ目だけ先に見せている間の、ステータスバー用の説明</summary>
     public static string LoadingFramesNotice(int frameCount) => $"コマを読み込み中…（全 {frameCount} コマ）";
 
+    /// <summary>全コマは持てないので、再生しながらコマを作るときの、ステータスバー用の説明</summary>
+    public static string StreamingNotice(long requiredBytes, long maxBytes) =>
+        $"省メモリ再生（全コマ {ToMB(requiredBytes)}MB > 上限 {ToMB(maxBytes)}MB）";
+
+    /// <summary>
+    /// 再生しながら作るときに、持っておくコマの枚数。上限の 1/4 に収まる枚数（ただし 3〜16 枚）。
+    /// 先のコマは順に作り続けるので、少し先まであれば足りる。多く持っても省メモリにならないので、少なめにする
+    /// </summary>
+    public static int StreamingWindow(long frameBytes, long maxBytes) =>
+        (int)Math.Clamp(frameBytes > 0 ? maxBytes / 4 / frameBytes : 3, 3, 16);
+
     /// <summary>上限を超えて1枚目だけにしたときの、ステータスバー用の説明</summary>
     public static string TooLargeNotice(long requiredBytes, long maxBytes) =>
         $"アニメ省略（{ToMB(requiredBytes)}MB > 上限 {ToMB(maxBytes)}MB）";

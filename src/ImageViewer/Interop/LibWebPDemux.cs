@@ -78,6 +78,11 @@ internal static unsafe class LibWebPDemux
     [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.SafeDirectories)]
     public static extern int WebPAnimDecoderGetNext(IntPtr decoder, byte** buffer, int* timestamp);
 
+    /// <summary>最初のコマから読み直す（デコーダを作り直さずに巻き戻す）</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.SafeDirectories)]
+    public static extern void WebPAnimDecoderReset(IntPtr decoder);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.SafeDirectories)]
     public static extern void WebPAnimDecoderDelete(IntPtr decoder);

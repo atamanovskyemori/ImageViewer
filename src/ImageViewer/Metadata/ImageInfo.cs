@@ -64,16 +64,17 @@ public static class ImageInfoBuilder
         ["Model"] = "モデル",
         ["Model hash"] = "モデルのハッシュ",
         ["Denoising strength"] = "ノイズ除去の強さ",
-        ["Hires upscale"] = "高解像度化の倍率",
-        ["Hires upscaler"] = "高解像度化の拡大方法",
-        ["Hires steps"] = "高解像度化のステップ数",
+        // 高解像度化の項目は、パネルの項目名の欄に収まるよう短めにする
+        ["Hires upscale"] = "高解像度 倍率",
+        ["Hires upscaler"] = "高解像度 拡大方法",
+        ["Hires steps"] = "高解像度 ステップ数",
         ["Version"] = "バージョン",
         ["Guidance"] = "ガイダンス",
         ["LoRA"] = "LoRA",
-        ["Hires resize"] = "高解像度化の大きさ",
-        ["Hires denoising strength"] = "高解像度化のノイズ除去の強さ",
-        ["Hires sampler"] = "高解像度化のサンプラー",
-        ["Hires CFG scale"] = "高解像度化の CFG スケール",
+        ["Hires resize"] = "高解像度 大きさ",
+        ["Hires denoising strength"] = "高解像度 ノイズ除去",
+        ["Hires sampler"] = "高解像度 サンプラー",
+        ["Hires CFG scale"] = "高解像度 CFG",
     };
 
     /// <param name="generation">生成AIの生成情報。無ければ null</param>

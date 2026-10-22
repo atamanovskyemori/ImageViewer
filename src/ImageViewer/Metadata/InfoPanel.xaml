@@ -28,7 +28,8 @@
                            TextWrapping="Wrap"
                            Text="画像が開かれていません" />
 
-                <ItemsControl x:Name="SectionList" Focusable="False">
+                <!-- 項目名の列の幅を、全部の見出しでそろえる（Grid.IsSharedSizeScope と SharedSizeGroup） -->
+                <ItemsControl x:Name="SectionList" Focusable="False" Grid.IsSharedSizeScope="True">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:InfoSection}">
                             <StackPanel Margin="0,6,0,4">
@@ -39,13 +40,19 @@
                                 <ItemsControl ItemsSource="{Binding Rows}" Focusable="False">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type local:InfoRow}">
+                                            <!--
+                                                項目名の列は、いちばん長い項目名に合わせる（どの見出しでも同じ幅）。
+                                                ただし値の欄が狭くなりすぎないよう、140 を超える項目名だけ折り返す
+                                            -->
                                             <Grid Margin="0,1">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="104" />
+                                                    <ColumnDefinition Width="Auto" MinWidth="104" SharedSizeGroup="Label" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0"
                                                            Text="{Binding Label}"
+                                                           Margin="0,0,8,0"
+                                                           MaxWidth="140"
                                                            Foreground="#FF909090"
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Grid.Column="1"

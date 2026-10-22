@@ -654,7 +654,7 @@ public partial class MainWindow : Window
 
         UpdatePlayerSuspended();
         UpdateRotateButtons();
-        UpdateViewLockBadge();
+        UpdateBadges();
         UpdateStatus();
     }
 
@@ -700,7 +700,7 @@ public partial class MainWindow : Window
 
         UpdatePlayerSuspended();
         UpdateRotateButtons();
-        UpdateViewLockBadge();
+        UpdateBadges();
     }
 
     private void ToggleThumbnails()
@@ -1417,6 +1417,7 @@ public partial class MainWindow : Window
         _bitmap = bitmap;
         _bitmapPath = bitmap is null ? null : path;
         _fullResolutionPath = null;
+        UpdateBadges(); // 前の画像を読み直している印は消す
         ImageView.Source = bitmap;
         _rotation = 0; // 回転は画像ごとにリセット
 
@@ -1492,19 +1493,28 @@ public partial class MainWindow : Window
         _viewLocked = !_viewLocked;
         _lockedView = null; // 次に画像を切り替えるときの見え方を覚える
         ViewLockButton.IsChecked = _viewLocked;
-        UpdateViewLockBadge();
+        UpdateBadges();
         ShowNotice(_viewLocked
             ? "表示を固定：ズーム・位置・回転を次の画像でもそのままにします"
             : "表示の固定を解除しました");
     }
 
     /// <summary>
-    /// 固定中の印を出す / 隠す。全画面でもツールバーが隠れても分かるように、画像の上に出す。
-    /// 一覧を出している間は、1枚表示の見え方の話なので隠す
+    /// 画像の上に出す印を、今の状態に合わせる。全画面でツールバーやステータスバーが隠れていても分かるように、画像の上に出す。
+    /// 一覧を出している間は、どちらも1枚表示の話なので隠す。
+    /// <list type="bullet">
+    /// <item>右上：表示の固定中</item>
+    /// <item>左上：元の大きさで読み直し中（表示中の画像のときだけ）</item>
+    /// </list>
     /// </summary>
-    private void UpdateViewLockBadge()
+    private void UpdateBadges()
     {
         ViewLockBadge.Visibility = _viewLocked && !_thumbnailMode ? Visibility.Visible : Visibility.Collapsed;
+
+        bool loadingShown = !_thumbnailMode
+            && _fullResolutionLoadingPath is not null
+            && string.Equals(_fullResolutionLoadingPath, _bitmapPath, StringComparison.OrdinalIgnoreCase);
+        FullResolutionBadge.Visibility = loadingShown ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ViewLockButton_Click(object sender, RoutedEventArgs e) => ToggleViewLock();
@@ -1565,12 +1575,31 @@ public partial class MainWindow : Window
         _ = LoadFullResolutionAsync(path);
     }
 
+    // 元の大きさで読み直していることを出すまでの時間（すぐ読めるときにちらつかないように）
+    private static readonly TimeSpan FullResolutionBadgeDelay = TimeSpan.FromMilliseconds(250);
+
+    // 出したら、少なくともこれだけは出しておく。一瞬だけ出て消えるとちらついて見えるのと、
+    // 読み終わってから大きな画像が実際に画面に出るまで（描画の準備）にも少し時間がかかるので
+    private static readonly TimeSpan FullResolutionBadgeMinTime = TimeSpan.FromMilliseconds(600);
+
+    // 元の大きさで読み直していて、そのことを画面に出しているファイル。出していなければ null
+    private string? _fullResolutionLoadingPath;
+
     private async Task LoadFullResolutionAsync(string path)
     {
         DecodedImage full;
+        Stopwatch? badgeShown = null;
         try
         {
-            full = await Task.Run(() => _loader.Load(path));
+            var loadTask = Task.Run(() => _loader.Load(path));
+            if (await Task.WhenAny(loadTask, Task.Delay(FullResolutionBadgeDelay)) != loadTask)
+            {
+                // 時間がかかっている。読み直している間は、縮めた画像を引き伸ばしてぼやけて見えるので、そう分かるように出す
+                _fullResolutionLoadingPath = path;
+                badgeShown = Stopwatch.StartNew();
+                UpdateBadges();
+            }
+            full = await loadTask;
         }
         catch (Exception ex)
         {
@@ -1584,6 +1613,10 @@ public partial class MainWindow : Window
             }
             return;
         }
+        finally
+        {
+            _ = HideFullResolutionBadgeAsync(path, badgeShown);
+        }
 
         // 読んでいる間に別の画像へ移っていたら捨てる
         if (_image is not { IsReduced: true } || !string.Equals(_bitmapPath, path, StringComparison.OrdinalIgnoreCase))
@@ -1596,6 +1629,25 @@ public partial class MainWindow : Window
         _bitmap = full.Image;
         ImageView.Source = full.Image;
         UpdateStatus();
+    }
+
+    /// <summary>読み直し中の印を消す。出していたなら、少なくとも <see cref="FullResolutionBadgeMinTime"/> は出してから消す</summary>
+    private async Task HideFullResolutionBadgeAsync(string path, Stopwatch? shown)
+    {
+        if (shown is null) return; // 出していない
+
+        var remaining = FullResolutionBadgeMinTime - shown.Elapsed;
+        if (remaining > TimeSpan.Zero)
+        {
+            await Task.Delay(remaining);
+        }
+
+        // その間に別の画像へ移っていたら、印はもう隠れている（UpdateBadges は表示中の画像のときだけ出す）
+        if (string.Equals(_fullResolutionLoadingPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            _fullResolutionLoadingPath = null;
+            UpdateBadges();
+        }
     }
 
     /// <summary>回転を反映した、等倍時の見た目のサイズ（90°/270°なら縦横が入れ替わる）</summary>

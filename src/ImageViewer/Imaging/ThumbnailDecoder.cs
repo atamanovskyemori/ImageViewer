@@ -49,8 +49,8 @@ public sealed class ThumbnailDecoder : IThumbnailDecoder
         }
         catch (Exception ex) when (ex is not OutOfMemoryException && IsWebP(data) && LibWebP.IsAvailable)
         {
-            // OS に WebP 拡張機能が無い。libwebp で全体を読んでから縮める
-            return Normalize(Downscale(WebPImageDecoder.DecodeBitmap(data), maxPixelSize));
+            // OS に WebP 拡張機能が無い。libwebp で縮めながら読む
+            return Normalize(WebPImageDecoder.DecodeBitmap(data, maxPixelSize));
         }
     }
 

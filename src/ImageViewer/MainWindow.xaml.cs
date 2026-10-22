@@ -1334,6 +1334,8 @@ public partial class MainWindow : Window
         {
             ImageView.Width = 0;
             ImageView.Height = 0;
+            ImageBackdrop.Width = 0; // 後ろに敷いたものも消す
+            ImageBackdrop.Height = 0;
             return;
         }
 
@@ -1355,6 +1357,10 @@ public partial class MainWindow : Window
         var dpi = VisualTreeHelper.GetDpi(this);
         ImageView.Width = _image.PixelWidth / dpi.DpiScaleX;
         ImageView.Height = _image.PixelHeight / dpi.DpiScaleY;
+
+        // 後ろに敷くもの（市松模様など）も、画像とぴったり同じ大きさにする
+        ImageBackdrop.Width = ImageView.Width;
+        ImageBackdrop.Height = ImageView.Height;
     }
 
     /// <summary>
@@ -1550,7 +1556,10 @@ public partial class MainWindow : Window
 
     private void ApplyTransform()
     {
-        ImageView.RenderTransform = new MatrixTransform(BuildMatrix());
+        var transform = new MatrixTransform(BuildMatrix());
+        transform.Freeze();
+        ImageView.RenderTransform = transform;
+        ImageBackdrop.RenderTransform = transform; // 後ろに敷くものも、画像と同じ位置・向き・倍率で重ねる
 
         // 200%以上はドットがくっきり見えるように補間なし、それ未満は高品質補間
         RenderOptions.SetBitmapScalingMode(

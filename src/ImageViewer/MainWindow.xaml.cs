@@ -210,14 +210,17 @@ public partial class MainWindow : Window
     /// <summary>ファイルまたはフォルダを開く</summary>
     public void OpenPath(string path)
     {
-        bool isDirectory = Directory.Exists(path);
+        if (Directory.Exists(path))
+        {
+            _ = OpenDirectoryAsync(path);
+            return;
+        }
+
         bool opened;
         try
         {
             // ファイルは、まず1枚だけで開いてすぐ表示する。フォルダの一覧は裏で作る（LoadFolderListingAsync）
-            opened = isDirectory
-                ? _navigator.OpenDirectory(path)
-                : _navigator.OpenSingleFile(path);
+            opened = _navigator.OpenSingleFile(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -231,12 +234,95 @@ public partial class MainWindow : Window
             return;
         }
 
+        BeginOpenedFolder(listingPending: true);
+
+        if (_thumbnailMode)
+        {
+            LeaveThumbnailMode();
+        }
+
+        // 画像のデコードを先に始めてから、一覧を作り始める
+        _ = ShowCurrentAsync();
+        _ = LoadFolderListingAsync(_navigator.Current!, _openVersion);
+    }
+
+    // フォルダの一覧がこれより長くかかったら、「読み込んでいます」と出す（すぐ終わるときにちらつかないように）
+    private static readonly TimeSpan FolderLoadingNoticeDelay = TimeSpan.FromMilliseconds(300);
+
+    // フォルダを開くたびに増やす。続けて別のフォルダを開いたときに、前のフォルダの一覧を捨てるのに使う
+    private int _directoryOpenVersion;
+
+    /// <summary>
+    /// フォルダを開いて、サムネイル一覧から始める。フォルダの一覧（列挙と並べ替え）は裏で作るので、
+    /// ファイル数の多いフォルダやネットワークドライブでも画面を止めない。作っている間は、今の表示のまま。
+    /// </summary>
+    private async Task OpenDirectoryAsync(string path)
+    {
+        int version = ++_directoryOpenVersion;
+        int openVersion = _openVersion; // 作っている間にファイルや隣のフォルダが開かれたら、こちらは捨てる
+        var key = _navigator.SortKey;
+        bool descending = _navigator.SortDescending;
+        bool noticeShown = false;
+
+        bool IsStale() => version != _directoryOpenVersion || openVersion != _openVersion;
+
+        FolderListing listing;
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var listTask = Task.Run(() => FolderNavigator.ListFolder(fullPath, key, descending));
+            if (await Task.WhenAny(listTask, Task.Delay(FolderLoadingNoticeDelay)) != listTask && !IsStale())
+            {
+                ShowNotice($"フォルダを読み込んでいます…\n{Path.GetFileName(Path.TrimEndingDirectorySeparator(fullPath))}");
+                noticeShown = true;
+            }
+            listing = await listTask;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            if (!IsStale())
+            {
+                HideNotice(noticeShown);
+                ShowMessage($"開けませんでした。\n{ex.Message}");
+            }
+            return;
+        }
+
+        if (IsStale())
+        {
+            return; // 作っている間に、別のファイル・フォルダが開かれた
+        }
+
+        HideNotice(noticeShown);
+        if (!_navigator.OpenListing(listing))
+        {
+            ShowMessage($"表示できる画像が見つかりませんでした。\n{path}");
+            return;
+        }
+
+        BeginOpenedFolder(listingPending: false);
+
+        // フォルダは一覧から始める。前のフォルダの画像は片付けておく（一覧から戻ったときに出ないように）
+        _loadVersion++;
+        SetImage(null, null);
+        HideMessage();
+        _pathBeforeThumbnails = null;
+        ShowThumbnails();
+    }
+
+    /// <summary>
+    /// ファイル・フォルダを開いたときの共通の後片付け。スライドショーを止め、作りかけの一覧を捨て、
+    /// 見張るフォルダ・フォルダの移動の範囲を決め直し、キャッシュを捨てる（開き直したときは、ファイルが更新されているかもしれないので）。
+    /// </summary>
+    /// <param name="listingPending">フォルダの一覧をまだ裏で作っているか（ファイルを開いたとき）</param>
+    private void BeginOpenedFolder(bool listingPending)
+    {
         // 別のものを開いたら、スライドショーは終わり
         StopSlideshow();
 
         // 作りかけの一覧があれば、もう使わない
         _openVersion++;
-        _listingPending = !isDirectory;
+        _listingPending = listingPending;
         _rescanAfterListing = false;
         _folderWatcher.Watch(_navigator.CurrentDirectory);
 
@@ -245,32 +331,10 @@ public partial class MainWindow : Window
             ? Path.GetDirectoryName(openedFolder) ?? openedFolder // ドライブのルートを開いたときは、その中だけ
             : null;
 
-        // 開き直したときは、ファイルが更新されているかもしれないので読み直す
         _cache.Clear();
         _thumbnailCache?.Invalidate();
         _infoPath = null; // 情報も読み直す
         _direction = 1;
-
-        if (isDirectory)
-        {
-            // フォルダは一覧から始める。前のフォルダの画像は片付けておく（一覧から戻ったときに出ないように）
-            _loadVersion++;
-            SetImage(null, null);
-            HideMessage();
-            _pathBeforeThumbnails = null;
-            ShowThumbnails();
-        }
-        else
-        {
-            if (_thumbnailMode)
-            {
-                LeaveThumbnailMode();
-            }
-
-            // 画像のデコードを先に始めてから、一覧を作り始める
-            _ = ShowCurrentAsync();
-            _ = LoadFolderListingAsync(_navigator.Current!, _openVersion);
-        }
     }
 
     /// <summary>
@@ -895,6 +959,15 @@ public partial class MainWindow : Window
         NoticeHost.Visibility = Visibility.Visible;
         _noticeTimer.Stop();
         _noticeTimer.Start();
+    }
+
+    /// <summary>出していたお知らせ（「読み込んでいます」など）を、時間を待たずに消す</summary>
+    private void HideNotice(bool shown)
+    {
+        if (!shown) return;
+
+        _noticeTimer.Stop();
+        NoticeHost.Visibility = Visibility.Collapsed;
     }
 
     // ------------------------------------------------------------

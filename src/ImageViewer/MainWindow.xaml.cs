@@ -654,6 +654,7 @@ public partial class MainWindow : Window
 
         UpdatePlayerSuspended();
         UpdateRotateButtons();
+        UpdateViewLockBadge();
         UpdateStatus();
     }
 
@@ -699,6 +700,7 @@ public partial class MainWindow : Window
 
         UpdatePlayerSuspended();
         UpdateRotateButtons();
+        UpdateViewLockBadge();
     }
 
     private void ToggleThumbnails()
@@ -1490,9 +1492,19 @@ public partial class MainWindow : Window
         _viewLocked = !_viewLocked;
         _lockedView = null; // 次に画像を切り替えるときの見え方を覚える
         ViewLockButton.IsChecked = _viewLocked;
+        UpdateViewLockBadge();
         ShowNotice(_viewLocked
             ? "表示を固定：ズーム・位置・回転を次の画像でもそのままにします"
             : "表示の固定を解除しました");
+    }
+
+    /// <summary>
+    /// 固定中の印を出す / 隠す。全画面でもツールバーが隠れても分かるように、画像の上に出す。
+    /// 一覧を出している間は、1枚表示の見え方の話なので隠す
+    /// </summary>
+    private void UpdateViewLockBadge()
+    {
+        ViewLockBadge.Visibility = _viewLocked && !_thumbnailMode ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ViewLockButton_Click(object sender, RoutedEventArgs e) => ToggleViewLock();

@@ -283,6 +283,31 @@
                            TextWrapping="Wrap" />
             </Border>
 
+            <!-- 表示の固定中の印。全画面でツールバーが隠れていても分かるように、画像の上の右上に出す -->
+            <Border x:Name="ViewLockBadge"
+                    Grid.Column="0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,12,12,0"
+                    Padding="8,4"
+                    CornerRadius="4"
+                    Background="#B0303030"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontFamily="{StaticResource IconFont}"
+                               Text="&#xE72E;"
+                               FontSize="12"
+                               Foreground="#FFF0F0F0"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="表示を固定中"
+                               Margin="6,0,0,0"
+                               FontSize="12"
+                               Foreground="#FFF0F0F0"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
             <!-- 画像の情報。開くと、その分だけ画像表示領域（一覧）が狭くなる -->
             <GridSplitter x:Name="InfoSplitter"
                           Grid.Column="1"

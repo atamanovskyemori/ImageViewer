@@ -61,7 +61,7 @@ src/ImageViewer/
     ImageInfoLoader.cs        ファイルの情報と EXIF を裏で読む（画像はデコードしない）
     PngTextReader.cs          PNG のテキストチャンク（tEXt / zTXt / iTXt）を読む
     GenerationInfo.cs         画像生成AIの生成情報（WebUI の parameters / EXIF の UserComment）を読む
-    GenerationInfo.ComfyUI.cs ComfyUI のノード構成（PNG の prompt）から生成情報を取り出す
+    GenerationInfo.ComfyUI.cs ComfyUI のノード構成（PNG の prompt / WebP・JPEG の EXIF）から生成情報を取り出す
     InfoPanel.xaml(.cs)       右側の情報パネル
   Settings/
     IniFile.cs                INI ファイルの読み書き（UTF-8）
@@ -272,7 +272,7 @@ I かツールバーのボタンで、右側に情報パネルを出す / 隠す
 
 Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に書き込んだ生成情報を、「生成情報」の欄に出す。
 
-- 読む場所：PNG はテキストチャンク `parameters`（WebUI）か `prompt`（ComfyUI）、JPEG / WebP は EXIF の UserComment
+- 読む場所：PNG はテキストチャンク `parameters`（WebUI）か `prompt`（ComfyUI）、JPEG / WebP は EXIF の UserComment（WebUI）か、EXIF の文字列のタグ（ComfyUI。下を参照）
 - プロンプト・ネガティブプロンプト（どちらも全文）と、設定の行（ステップ数・サンプラー・CFG スケール・シード・サイズ・モデルなど。知らない項目は WebUI の書き方のまま）
 - 右クリック →「プロンプトをコピー」「ネガティブプロンプトをコピー」で、そのまま WebUI に貼れる
 - JPEG / WebP の UserComment は、最後に「Steps: …」の設定の行があるときだけ生成情報とみなす（カメラのふつうのコメントと間違えないように）。それ以外は「その他」に「コメント」として出す
@@ -290,6 +290,12 @@ Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に
     - CLIPTextEncodeFlux（プロンプトとガイダンス）、SDXL Prompt Styler（スタイルを当てる前の文字列）
     - Impact Pack の ImpactWildcardProcessor / ImpactWildcardEncode（ワイルドカードを展開した後の文字列）
   - ほかのカスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
+  - WebP / JPEG で保存したものは、EXIF に入っているノード構成を読む。決まった置き場所は無いので、使われている書き方を順に試す
+    - ComfyUI 本体（SaveAnimatedWEBP）：IFD0 の Model に `prompt:{...}`（Make には `workflow:{...}`）
+    - WAS Node Suite など：Make に `Prompt:{...}`（ImageDescription に `Workflow:{...}`）
+    - UserComment などに `prompt:` を付けずに JSON をそのまま書くもの
+    - `workflow:` の方（画面のノード配置）は読まない。Make / Model / UserComment が ComfyUI の JSON なら、「メーカー」「機種」「コメント」の欄には出さない
+    - JPEG は EXIF 全体が 64KB までなので、大きいノード構成は入りきらない（保存するカスタムノードの側で落ちる）
 - PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
 - EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク、HEIC / AVIF の meta 箱の中の Exif アイテム、JPEG XL の Exif の箱）

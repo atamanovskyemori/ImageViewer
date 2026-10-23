@@ -78,6 +78,7 @@ public sealed class ExifData
 public static class ExifTags
 {
     // IFD0
+    public const ushort ImageDescription = 0x010E;
     public const ushort Make = 0x010F;
     public const ushort Model = 0x0110;
     public const ushort Orientation = 0x0112;

@@ -22,7 +22,7 @@ public static class ExifReader
 {
     // 壊れたファイルで延々と読まないための上限
     private const int MaxEntriesPerIfd = 1000;
-    private const int MaxValueBytes = 64 * 1024;
+    private const int MaxValueBytes = 1024 * 1024; // ComfyUI はノード構成の JSON を丸ごと文字列のタグに入れるので、大きめにする
     private const int MaxBlockBytes = 16 * 1024 * 1024;
     private const int MaxSegments = 10000;
 

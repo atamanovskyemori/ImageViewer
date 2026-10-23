@@ -10,6 +10,7 @@ public static class GenerationSources
     public const string PngParameters = "PNG（parameters）";
     public const string ExifUserComment = "EXIF（UserComment）";
     public const string PngComfyUI = "PNG（ComfyUI の prompt）";
+    public const string ExifComfyUI = "EXIF（ComfyUI の prompt）";
 }
 
 /// <summary>

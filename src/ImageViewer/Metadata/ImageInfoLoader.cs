@@ -56,7 +56,7 @@ public static class ImageInfoLoader
             exif = ExifReader.Read(stream);
 
             // 画像生成AIの生成情報。PNG はテキストチャンク "parameters"（WebUI）か "prompt"（ComfyUI）、
-            // JPEG / WebP は EXIF の UserComment に入っている
+            // JPEG / WebP は EXIF の UserComment（WebUI）か、Model などの文字列のタグ（ComfyUI）に入っている
             if (kind == ImageKind.Png)
             {
                 pngTexts = PngTextReader.Read(stream);
@@ -80,6 +80,8 @@ public static class ImageInfoLoader
                     generation = parsed;
                 }
             }
+
+            generation ??= GenerationInfo.ParseComfyUIExif(exif);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

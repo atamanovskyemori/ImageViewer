@@ -158,6 +158,16 @@ namespace ImageViewer.Tests.Metadata
         }
 
         [TestMethod]
+        public void Long_Text_Like_A_Comfy_Prompt_Is_Read()
+        {
+            // ComfyUI puts its whole node graph (often over 64KB) into one ASCII tag
+            var text = "prompt:" + new string('x', 300 * 1024);
+            var exif = ExifReader.ReadTiff(new TiffBuilder().Ascii(ExifIfd.Primary, ExifTags.Model, text).Build())!;
+
+            Assert.AreEqual(text, exif.GetText(ExifIfd.Primary, ExifTags.Model));
+        }
+
+        [TestMethod]
         public void Huge_Count_Is_Skipped()
         {
             var tiff = new TiffBuilder()

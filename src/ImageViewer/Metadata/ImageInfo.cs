@@ -147,8 +147,8 @@ public static class ImageInfoBuilder
         Add(shotRows, "撮影日時", ExifFormat.DateTime(
             exif.GetText(ExifIfd.Exif, ExifTags.DateTimeOriginal) ?? exif.GetText(ExifIfd.Primary, ExifTags.DateTime),
             exif.GetText(ExifIfd.Exif, ExifTags.OffsetTimeOriginal)));
-        Add(shotRows, "メーカー", exif.GetText(ExifIfd.Primary, ExifTags.Make));
-        Add(shotRows, "機種", exif.GetText(ExifIfd.Primary, ExifTags.Model));
+        Add(shotRows, "メーカー", WithoutComfyUI(exif.GetText(ExifIfd.Primary, ExifTags.Make)));
+        Add(shotRows, "機種", WithoutComfyUI(exif.GetText(ExifIfd.Primary, ExifTags.Model)));
         Add(shotRows, "レンズ", exif.GetText(ExifIfd.Exif, ExifTags.LensModel) ?? exif.GetText(ExifIfd.Exif, ExifTags.LensMake));
         Add(shotRows, "焦点距離", ExifFormat.FocalLength(
             exif.GetRational(ExifIfd.Exif, ExifTags.FocalLength),
@@ -186,10 +186,13 @@ public static class ImageInfoBuilder
         // UserComment は、生成情報として読んだのでなければ、ただのコメントとして出す
         if (generation?.Source != GenerationSources.ExifUserComment)
         {
-            Add(otherRows, "コメント", Shorten(GenerationInfo.DecodeUserComment(exif.Get(ExifIfd.Exif, ExifTags.UserComment)?.Bytes)));
+            Add(otherRows, "コメント", Shorten(WithoutComfyUI(GenerationInfo.DecodeUserComment(exif.Get(ExifIfd.Exif, ExifTags.UserComment)?.Bytes))));
         }
         AddSection(sections, "その他", otherRows);
     }
+
+    /// <summary>ComfyUI が EXIF の Make / Model などに入れたノード構成の JSON は、メーカー名などではないので出さない</summary>
+    private static string? WithoutComfyUI(string? text) => GenerationInfo.IsComfyUIExifText(text) ? null : text;
 
     private static string? Shorten(string? text) =>
         text is { Length: > MaxTextLength } ? text[..MaxTextLength] + "…（以下省略）" : text;

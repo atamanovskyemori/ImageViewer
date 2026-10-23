@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace ImageViewer.Metadata;
 
 /// <summary>
-/// ComfyUI が PNG のテキストチャンク "prompt" に書き込むノード構成（API 形式の JSON）から、生成情報を取り出す。
+/// ComfyUI が PNG のテキストチャンク "prompt"（WebP などなら EXIF。<see cref="ParseComfyUIExif"/>）に書き込むノード構成（API 形式の JSON）から、生成情報を取り出す。
 /// <code>
 /// { "3": { "class_type": "KSampler", "inputs": { "seed": 123, "positive": ["6", 0], ... } }, "6": { ... }, ... }
 /// </code>
@@ -27,7 +27,8 @@ public sealed partial class GenerationInfo
     /// ComfyUI のノード構成から生成情報を取り出す。サンプラーが無い・読めない JSON なら null。
     /// </summary>
     /// <param name="json">PNG のテキストチャンク "prompt" の中身</param>
-    public static GenerationInfo? ParseComfyUI(string? json)
+    /// <param name="source">どこから読んだか（<see cref="GenerationSources"/> のどれか）</param>
+    public static GenerationInfo? ParseComfyUI(string? json, string source = GenerationSources.PngComfyUI)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -41,12 +42,76 @@ public sealed partial class GenerationInfo
             {
                 return null;
             }
-            return new ComfyGraph(document.RootElement).Read(json.Trim());
+            return new ComfyGraph(document.RootElement, source).Read(json.Trim());
         }
         catch (JsonException)
         {
             return null; // 壊れた JSON（Python が書く NaN なども含む）。PNG テキストとしてそのまま出す
         }
+    }
+
+    /// <summary>
+    /// WebP / JPEG で保存したときに EXIF に書かれる、ComfyUI のノード構成から生成情報を取り出す。
+    /// 決まった置き場所は無いので、使われている書き方を順に試す：
+    /// <list type="bullet">
+    /// <item>ComfyUI 本体（SaveAnimatedWEBP）：IFD0 の Model に "prompt:{...}"（Make には "workflow:{...}"）</item>
+    /// <item>WAS Node Suite など：Make に "Prompt:{...}"、ImageDescription に "Workflow:{...}"</item>
+    /// <item>UserComment などに、"prompt:" を付けずに JSON をそのまま書くもの</item>
+    /// </list>
+    /// "workflow:" のもの（画面のノード配置。サンプラーの設定は prompt の方から読む）は読まない。見つからなければ null。
+    /// </summary>
+    public static GenerationInfo? ParseComfyUIExif(ExifData? exif)
+    {
+        if (exif is null)
+        {
+            return null;
+        }
+
+        string?[] texts =
+        [
+            exif.GetText(ExifIfd.Primary, ExifTags.Model),
+            exif.GetText(ExifIfd.Primary, ExifTags.Make),
+            exif.GetText(ExifIfd.Primary, ExifTags.ImageDescription),
+            DecodeUserComment(exif.Get(ExifIfd.Exif, ExifTags.UserComment)?.Bytes),
+        ];
+
+        foreach (var text in texts)
+        {
+            if (ComfyUIJson(text) is { Label: not "workflow" } found
+                && ParseComfyUI(found.Json, GenerationSources.ExifComfyUI) is { } info)
+            {
+                return info;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// EXIF の文字列が ComfyUI の JSON（"prompt:{...}" / "workflow:{...}" / "{...}"）か。
+    /// メーカー・機種・コメントの欄に、長い JSON をそのまま出さないために使う
+    /// </summary>
+    public static bool IsComfyUIExifText(string? text) => ComfyUIJson(text) is not null;
+
+    /// <summary>"prompt:" / "workflow:"（大文字小文字は問わない）を外した JSON と、外した名前（小文字。無ければ空）</summary>
+    private static (string Label, string Json)? ComfyUIJson(string? text)
+    {
+        if (text is null)
+        {
+            return null;
+        }
+
+        var body = text.TrimStart();
+        string label = "";
+        foreach (var prefix in (string[])["prompt", "workflow"])
+        {
+            if (body.StartsWith(prefix + ":", StringComparison.OrdinalIgnoreCase))
+            {
+                label = prefix;
+                body = body[(prefix.Length + 1)..].TrimStart();
+                break;
+            }
+        }
+        return body.StartsWith('{') ? (label, body) : null;
     }
 
     /// <summary>ノード構成を読む。JsonDocument が生きている間だけ使う</summary>
@@ -78,8 +143,11 @@ public sealed partial class GenerationInfo
 
         private readonly Dictionary<string, JsonElement> _nodes = new(StringComparer.Ordinal);
 
-        public ComfyGraph(JsonElement root)
+        private readonly string _source;
+
+        public ComfyGraph(JsonElement root, string source)
         {
+            _source = source;
             foreach (var node in root.EnumerateObject())
             {
                 if (node.Value.ValueKind == JsonValueKind.Object)
@@ -194,7 +262,7 @@ public sealed partial class GenerationInfo
                 AddHires(parameters, main, h.Settings, h.Path);
             }
 
-            return new GenerationInfo(GenerationSources.PngComfyUI, NullIfBlank(prompt), NullIfBlank(negativePrompt), parameters, raw);
+            return new GenerationInfo(_source, NullIfBlank(prompt), NullIfBlank(negativePrompt), parameters, raw);
         }
 
         /// <summary>

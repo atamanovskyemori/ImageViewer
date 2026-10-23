@@ -1,3 +1,4 @@
+using System.IO;
 using ImageViewer.Metadata;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -453,6 +454,119 @@ namespace ImageViewer.Tests.Metadata
             Assert.AreEqual("4", rows.Single(r => r.Label == "ガイダンス").Value);
             Assert.AreEqual("x.safetensors (0.7)", rows.Single(r => r.Label == "LoRA").Value);
             Assert.AreEqual("flux.safetensors", rows.Single(r => r.Label == "モデル").Value);
+        }
+
+        // The UI layout ("workflow"). It has no sampler settings of its own, so it is not read
+        private const string UiWorkflow = """{"last_node_id": 9, "nodes": [{"id": 3, "type": "KSampler", "widgets_values": [1, "fixed", 20]}], "links": []}""";
+
+        private static GenerationInfo? ParseExif(TiffBuilder builder) =>
+            GenerationInfo.ParseComfyUIExif(ExifReader.ReadTiff(builder.Build()));
+
+        [TestMethod]
+        public void Exif_Written_By_ComfyUI_Save_Webp_Is_Read()
+        {
+            // SaveAnimatedWEBP: Model = "prompt:{...}", Make = "workflow:{...}"
+            var info = ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "workflow:" + UiWorkflow)
+                .Ascii(ExifIfd.Primary, ExifTags.Model, "prompt:" + DefaultWorkflow));
+
+            Assert.IsNotNull(info);
+            Assert.AreEqual(GenerationSources.ExifComfyUI, info.Source);
+            Assert.AreEqual("beautiful scenery nature glass bottle landscape, purple galaxy bottle", info.Prompt);
+            Assert.AreEqual("20", info.Get("Steps"));
+            Assert.AreEqual(DefaultWorkflow.Trim(), info.Raw, "Raw is the JSON without the prefix");
+        }
+
+        [TestMethod]
+        public void Exif_Written_By_Was_Node_Suite_Is_Read()
+        {
+            // WAS Node Suite: Make = "Prompt:{...}", ImageDescription = "Workflow:{...}"
+            var info = ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.ImageDescription, "Workflow:" + UiWorkflow)
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "Prompt:" + DefaultWorkflow));
+
+            Assert.AreEqual("text, watermark", info?.NegativePrompt);
+        }
+
+        [TestMethod]
+        public void Bare_Json_In_User_Comment_Is_Read()
+        {
+            var comment = System.Text.Encoding.ASCII.GetBytes("ASCII\0\0\0" + DefaultWorkflow);
+            var info = ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "Canon")
+                .Raw(ExifIfd.Exif, ExifTags.UserComment, 7, (uint)comment.Length, comment));
+
+            Assert.AreEqual("v1-5-pruned-emaonly.safetensors", info?.Get("Model"));
+        }
+
+        [TestMethod]
+        public void Exif_Without_A_Comfy_Prompt_Gives_Null()
+        {
+            Assert.IsNull(ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "Canon")
+                .Ascii(ExifIfd.Primary, ExifTags.Model, "Canon EOS R5")));
+
+            // Only the UI layout: nothing to read the settings from
+            Assert.IsNull(ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "workflow:" + UiWorkflow)));
+
+            // Broken JSON
+            Assert.IsNull(ParseExif(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Model, "prompt:{\"3\": ")));
+
+            Assert.IsNull(GenerationInfo.ParseComfyUIExif(null));
+        }
+
+        [TestMethod]
+        [DataRow("prompt:{}", true)]
+        [DataRow("Workflow: {\"nodes\": []}", true)]
+        [DataRow("  {\"1\": {}}", true)]
+        [DataRow("Canon", false)]
+        [DataRow("prompt: a cat", false)]
+        [DataRow("", false)]
+        [DataRow(null, false)]
+        public void Comfy_Exif_Text_Is_Recognized(string? text, bool expected)
+        {
+            Assert.AreEqual(expected, GenerationInfo.IsComfyUIExifText(text));
+        }
+
+        [TestMethod]
+        public void Comfy_Json_Is_Not_Shown_As_Camera_Maker_Or_Model()
+        {
+            var exif = ExifReader.ReadTiff(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "workflow:" + UiWorkflow)
+                .Ascii(ExifIfd.Primary, ExifTags.Model, "prompt:" + DefaultWorkflow)
+                .Ascii(ExifIfd.Primary, ExifTags.Software, "ComfyUI")
+                .Build());
+            var facts = new FileFacts(@"C:\Out\a.webp", 1000, null, "WebP", 512, 768, false);
+
+            var info = ImageInfoBuilder.Build(facts, exif, GenerationInfo.ParseComfyUIExif(exif));
+
+            Assert.IsFalse(info.Sections.Any(s => s.Title == "撮影"), "Make / Model held only JSON");
+            Assert.AreEqual("ComfyUI", info.Sections.Single(s => s.Title == "その他").Rows.Single(r => r.Label == "ソフトウェア").Value);
+            Assert.IsTrue(info.Sections.Any(s => s.Title == "生成情報"));
+        }
+
+        [TestMethod]
+        public void Loader_Reads_Comfy_Prompt_From_A_Webp_File()
+        {
+            var webp = TiffBuilder.WrapWebP(new TiffBuilder()
+                .Ascii(ExifIfd.Primary, ExifTags.Make, "workflow:" + UiWorkflow)
+                .Ascii(ExifIfd.Primary, ExifTags.Model, "prompt:" + DefaultWorkflow)
+                .Build(), withExifPrefix: true);
+            var path = Path.Combine(Path.GetTempPath(), $"comfy-{Guid.NewGuid():N}.webp");
+            File.WriteAllBytes(path, webp);
+            try
+            {
+                var info = ImageInfoLoader.Load(path);
+
+                Assert.AreEqual(GenerationSources.ExifComfyUI, info.Generation?.Source);
+                Assert.AreEqual("text, watermark", info.Generation?.NegativePrompt);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
         }
     }
 }

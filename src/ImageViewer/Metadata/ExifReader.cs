@@ -13,6 +13,7 @@ namespace ImageViewer.Metadata;
 /// <item>PNG：eXIf チャンク</item>
 /// <item>WebP：EXIF チャンク</item>
 /// <item>HEIF（HEIC / AVIF）：meta 箱の中の Exif アイテム（<see cref="HeifReader"/>）</item>
+/// <item>JPEG XL：入れ物の Exif の箱（Brotli で縮めた brob の箱も。<see cref="JxlReader"/>）</item>
 /// </list>
 /// 壊れたデータ（範囲外のオフセット、ループする IFD、ありえない個数）でも例外は投げず、読めた分だけ返す。
 /// 読むのは IFD0・Exif IFD・GPS IFD だけ（サムネイル用の IFD1 やメーカー独自の情報は読まない）。
@@ -64,6 +65,11 @@ public static class ExifReader
             if (HeifReader.IsHeif(header))
             {
                 return ReadBlock(HeifReader.Read(stream)?.Exif);
+            }
+
+            if (JxlReader.IsJxl(header))
+            {
+                return ReadBlock(JxlReader.Read(stream)?.Exif);
             }
 
             if (header[..4].SequenceEqual("II*\0"u8) || header[..4].SequenceEqual("MM\0*"u8))

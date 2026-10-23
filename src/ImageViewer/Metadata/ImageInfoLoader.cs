@@ -102,6 +102,7 @@ public static class ImageInfoLoader
         Ico,
         JpegXr,
         Heif,
+        Jxl,
     }
 
     private static ImageKind Detect(ReadOnlySpan<byte> h)
@@ -115,6 +116,7 @@ public static class ImageInfoLoader
         if (h.Length >= 4 && h[0] == 0 && h[1] == 0 && h[2] == 1 && h[3] == 0) return ImageKind.Ico;
         if (h.Length >= 3 && h[0] == 'I' && h[1] == 'I' && h[2] == 0xBC) return ImageKind.JpegXr;
         if (HeifReader.IsHeif(h)) return ImageKind.Heif;
+        if (JxlReader.IsJxl(h)) return ImageKind.Jxl;
         return ImageKind.Unknown;
     }
 
@@ -139,6 +141,12 @@ public static class ImageInfoLoader
         if (kind == ImageKind.Heif && HeifReader.Read(stream) is { Width: { } heifWidth, Height: { } heifHeight } heif)
         {
             return heif.Rotation is 90 or 270 ? (heifHeight, heifWidth, 1) : (heifWidth, heifHeight, 1);
+        }
+
+        // JPEG XL も、コードストリームの先頭（SizeHeader と向き）から分かる
+        if (kind == ImageKind.Jxl && JxlReader.Read(stream) is { Width: { } jxlWidth, Height: { } jxlHeight })
+        {
+            return (jxlWidth, jxlHeight, 1);
         }
 
         if (kind == ImageKind.WebP && LibWebP.IsAvailable)
@@ -178,6 +186,7 @@ public static class ImageInfoLoader
         ImageKind.Ico => "ICO",
         ImageKind.JpegXr => "JPEG XR",
         ImageKind.Heif => HeifReader.BrandOf(header) is "avif" or "avis" ? "AVIF" : "HEIC",
+        ImageKind.Jxl => "JPEG XL",
         _ => Path.GetExtension(path).TrimStart('.').ToUpperInvariant() is { Length: > 0 } ext ? ext : "不明",
     };
 }

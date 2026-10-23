@@ -54,6 +54,7 @@ src/ImageViewer/
   Metadata/
     ExifReader.cs             EXIF を読む（JPEG / TIFF / PNG / WebP / HEIF の入れ物から TIFF 構造を探して読む）
     HeifReader.cs             HEIF（HEIC / AVIF）の箱から、EXIF・主画像の大きさ・回転を読む
+    JxlReader.cs              JPEG XL の箱から EXIF（Brotli で縮めたものも）を、コードストリームの先頭から大きさ・向きを読む
     ExifData.cs               読んだタグ・タグ番号・有理数
     ExifFormat.cs             値を表示用の文字列にする（F値・シャッター速度・GPS など）
     ImageInfo.cs              情報パネルに出す行を作る
@@ -131,7 +132,7 @@ vcpkg install libwebp:x64-windows
 - OS にコーデック（Microsoft Store の「HEIF 画像拡張機能」「AV1 Video Extension」など）が入っていれば表示できる
 - 入っていなければ「表示できません」と出し、拡張機能が必要なことも添える（一覧では「×」）
 - EXIF の向きはコーデック側で反映される前提で、自分では回さない
-- 情報パネルには、HEIC / AVIF なら EXIF（撮影日時・機種・位置情報など）も出す。ピクセル数は、コーデックが無くてもファイルの中の大きさ（ispe）と回転（irot）から出す。JPEG XL は「ファイル」の欄だけ
+- 情報パネルには、HEIC / AVIF なら EXIF（撮影日時・機種・位置情報など）も出す。ピクセル数は、コーデックが無くてもファイルの中の大きさ（ispe）と回転（irot）から出す。JPEG XL も、入れ物の Exif の箱（Brotli で縮めた brob の箱も）から EXIF を出し、ピクセル数はコードストリームの先頭（SizeHeader と向き）から出す（入れ物の無い JPEG XL は EXIF を持てないので、ピクセル数だけ）
 
 ## アニメーション（GIF / WebP）
 
@@ -290,7 +291,7 @@ Stable Diffusion WebUI（AUTOMATIC1111 / Forge など）と ComfyUI が画像に
   - ほかのカスタムノードは書き方がまちまちなので、分かるものだけ拾う。サンプラーが見つからない・読めない JSON なら、これまでどおり「PNG テキスト」の欄にそのまま出す
 - PNG のほかのテキスト（`Software` など。ComfyUI の `workflow` も）は「PNG テキスト」の欄にそのまま出す（生成情報として読んだ `parameters` / `prompt` は重ねて出さない）。2000 文字を超えるものは省略する
 - PNG のテキストは tEXt / zTXt / iTXt（圧縮も）を読む。画像データの後ろに置いてあっても読む
-- EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク、HEIC / AVIF の meta 箱の中の Exif アイテム）。JPEG XL などは「ファイル」の欄だけ
+- EXIF は自前で読む（JPEG の APP1、TIFF、PNG の eXIf、WebP の EXIF チャンク、HEIC / AVIF の meta 箱の中の Exif アイテム、JPEG XL の Exif の箱）
 - EXIF の文字（メーカー・ソフトウェア・作者など）は、仕様では ASCII だが、UTF-8 や Shift_JIS で書くカメラ・ソフトもあるので、文字化けしないよう UTF-8 → Shift_JIS の順に読めるもので読む（決まった長さに収めるために文字の途中で切られているものは、切れた文字だけ落とす）
 - 読むのはヘッダとメタデータだけで、画像はデコードしない。裏のスレッドで読むので、表示は待たせない
 - 壊れた EXIF（範囲外のオフセット・ループする IFD・ありえない個数など）でも止まらず、読めた分だけ出す

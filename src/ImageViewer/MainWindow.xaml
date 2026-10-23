@@ -243,6 +243,16 @@
                        Stretch="Fill"
                        IsHitTestVisible="False"
                        RenderOptions.BitmapScalingMode="HighQuality" />
+                <!--
+                    縮めて読んだ大きい画像を拡大したときに、元の大きさの画像から見えているところだけを切り出して重ねる。
+                    下（ImageView）は縮めた画像のまま。大きさと変換はコードで当てる
+                -->
+                <Image x:Name="DetailView"
+                       Canvas.Left="0" Canvas.Top="0"
+                       Stretch="Fill"
+                       IsHitTestVisible="False"
+                       Visibility="Collapsed"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
             </Canvas>
 
             <!-- サムネイル一覧。表示中は上の画像表示領域を隠す（Viewport は大きさを保つため Hidden にする） -->

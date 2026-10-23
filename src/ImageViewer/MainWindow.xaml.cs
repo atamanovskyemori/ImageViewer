@@ -1496,6 +1496,7 @@ public partial class MainWindow : Window
         _bitmapPath = bitmap is null ? null : path;
         _fullResolutionPath = null;
         UpdateBadges(); // 前の画像を読み直している印は消す
+        ClearDetail();
         ImageView.Source = bitmap;
         _rotation = 0; // 回転は画像ごとにリセット
 
@@ -1616,6 +1617,7 @@ public partial class MainWindow : Window
         _image = image;
         _bitmap = image.Image;
         _fullResolutionPath = null; // 縮めて読んだものなら、拡大していれば元の大きさで読み直す（ApplyTransform から）
+        ClearDetail();
         ImageView.Source = image.Image;
         _player.Load(image);
         ApplyTransform();
@@ -1726,11 +1728,96 @@ public partial class MainWindow : Window
             return;
         }
 
-        // SetImage を通すとズーム・回転がリセットされるので、画像だけ差し替える（元の大きさは同じ）
+        // SetImage を通すとズーム・回転がリセットされるので、画像だけ差し替える（元の大きさは同じ）。
+        // 下（ImageView）は縮めた画像のまま。元の大きさの画像は、見えているところだけ切り出して上に重ねる
+        // （大きい画像を丸ごと出すと、描画の準備に時間がかかる。75MP で 0.4 秒ほど）
         _image = full;
         _bitmap = full.Image;
-        ImageView.Source = full.Image;
+        _detailSource = full.Image;
+        _detailRect = Int32Rect.Empty;
+        UpdateDetail();
         UpdateStatus();
+    }
+
+    // ------------------------------------------------------------
+    // 大きい画像の、見えているところだけを元の大きさで出す
+    // ------------------------------------------------------------
+
+    // 切り出すときに、見えている範囲から上下左右に広げる割合（少しパンしただけで切り出し直さないように）
+    private const double DetailMargin = 0.25;
+
+    // 元の大きさの画像（縮めて読んだ画像を、拡大して読み直したもの）。無ければ null（ImageView だけで出す）
+    private BitmapSource? _detailSource;
+
+    // 今 DetailView に出している、切り出した範囲（元の画像のピクセル座標）
+    private Int32Rect _detailRect = Int32Rect.Empty;
+
+    /// <summary>
+    /// 見えているところを元の大きさの画像から切り出して、縮めた画像の上に重ねる（ApplyTransform から毎回呼ぶ）。
+    /// 縮めた画像で足りるあいだ（縮小して見ているとき）は重ねない。
+    /// 見えている範囲が、切り出した範囲からはみ出したときだけ切り出し直す
+    /// </summary>
+    private void UpdateDetail()
+    {
+        if (_detailSource is null || _image is null || ImageView.Source is not BitmapSource reduced)
+        {
+            DetailView.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // 縮めた画像の1ピクセルが、画面の1ピクセル以下で出ているあいだは、縮めた画像で足りる
+        double reducedScale = (double)reduced.PixelWidth / _image.PixelWidth;
+        var visible = ViewGeometry.VisiblePixels(
+            new Size(Viewport.ActualWidth, Viewport.ActualHeight), BaseSize, _rotation, _zoom, _offset,
+            _image.PixelWidth, _image.PixelHeight);
+        if (_zoom <= reducedScale * 1.01 || visible.IsEmpty)
+        {
+            DetailView.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (!ViewGeometry.Contains(_detailRect, visible))
+        {
+            // CroppedBitmap は、元の画像（裏のスレッドで読んだもの）のデコーダにさわってしまい使えないので、ピクセルを写す
+            var rect = ViewGeometry.Expand(visible, DetailMargin, _image.PixelWidth, _image.PixelHeight);
+            try
+            {
+                DetailView.Source = BitmapRegion.Copy(_detailSource, rect);
+                _detailRect = rect;
+            }
+            catch (Exception ex) when (ex is OutOfMemoryException or ArgumentException or InvalidOperationException)
+            {
+                // 切り出せなかった。前のやり方（元の大きさの画像を丸ごと出す）に戻す
+                Debug.WriteLine(ex);
+                ImageView.Source = _detailSource;
+                ClearDetail();
+                return;
+            }
+        }
+
+        // 切り出した範囲を、画像の中のその位置に、画像と同じ変換で重ねる
+        double dipPerPixelX = BaseSize.Width / _image.PixelWidth;
+        double dipPerPixelY = BaseSize.Height / _image.PixelHeight;
+        DetailView.Width = _detailRect.Width * dipPerPixelX;
+        DetailView.Height = _detailRect.Height * dipPerPixelY;
+
+        var matrix = Matrix.Identity;
+        matrix.Translate(_detailRect.X * dipPerPixelX, _detailRect.Y * dipPerPixelY);
+        matrix.Append(BuildMatrix());
+        var transform = new MatrixTransform(matrix);
+        transform.Freeze();
+        DetailView.RenderTransform = transform;
+        RenderOptions.SetBitmapScalingMode(DetailView, RenderOptions.GetBitmapScalingMode(ImageView));
+        DetailView.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>重ねていた元の大きさの画像を片付ける（画像を切り替えたとき）</summary>
+    private void ClearDetail()
+    {
+        _detailSource = null;
+        _detailRect = Int32Rect.Empty;
+        DetailView.Source = null;
+        DetailView.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>読み直し中の印を消す。出していたなら、少なくとも <see cref="FullResolutionBadgeMinTime"/> は出してから消す</summary>
@@ -1870,6 +1957,7 @@ public partial class MainWindow : Window
             _zoom >= 2.0 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
 
         UpdateCheckerScale();
+        UpdateDetail();
         EnsureResolution();
     }
 

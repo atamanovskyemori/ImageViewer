@@ -84,6 +84,83 @@ namespace ImageViewer.Tests
         }
 
         [TestMethod]
+        public void Visible_Pixels_At_100_Percent_Are_The_Viewport_Size()
+        {
+            // 10000x7500 image at 100% (1 image pixel = 1 DIP here), scrolled so that (4000, 3000) is at the top-left
+            var visible = ViewGeometry.VisiblePixels(
+                new Size(1920, 1080), new Size(10000, 7500), 0, 1.0, new Vector(-4000, -3000), 10000, 7500);
+
+            Assert.AreEqual(new Int32Rect(4000, 3000, 1920, 1080), visible);
+        }
+
+        [TestMethod]
+        public void Visible_Pixels_Use_Image_Pixels_Not_Dips()
+        {
+            // On a 150% screen the image is 1/1.5 as many DIPs as pixels
+            var visible = ViewGeometry.VisiblePixels(
+                new Size(1000, 500), new Size(10000 / 1.5, 7500 / 1.5), 0, 1.0, new Vector(-1000, -500), 10000, 7500);
+
+            Assert.AreEqual(1500, visible.X);
+            Assert.AreEqual(750, visible.Y);
+            Assert.AreEqual(1500, visible.Width);
+            Assert.AreEqual(750, visible.Height);
+        }
+
+        [TestMethod]
+        public void Visible_Pixels_Of_A_Rotated_Image_Cover_The_Rotated_Viewport()
+        {
+            // Rotated 90°: a wide viewport sees a tall strip of the original image
+            var size = new Size(4000, 3000);
+            var offset = ViewGeometry.OffsetFor(new Point(0.5, 0.5), new Point(400, 200), size, 90, 1.0);
+
+            var visible = ViewGeometry.VisiblePixels(new Size(800, 400), size, 90, 1.0, offset, 4000, 3000);
+
+            Assert.AreEqual(400, visible.Width, $"got {visible}");
+            Assert.AreEqual(800, visible.Height);
+            Assert.AreEqual(1800, visible.X);
+            Assert.AreEqual(1100, visible.Y);
+        }
+
+        [TestMethod]
+        public void Visible_Pixels_Stop_At_The_Image_Edge()
+        {
+            // The image is smaller than the viewport and centered: all of it is visible
+            var visible = ViewGeometry.VisiblePixels(
+                new Size(1920, 1080), new Size(400, 300), 0, 1.0, new Vector(760, 390), 400, 300);
+
+            Assert.AreEqual(new Int32Rect(0, 0, 400, 300), visible);
+        }
+
+        [TestMethod]
+        public void Nothing_Visible_When_Scrolled_Off()
+        {
+            var visible = ViewGeometry.VisiblePixels(
+                new Size(800, 600), new Size(400, 300), 0, 1.0, new Vector(5000, 5000), 400, 300);
+
+            Assert.IsTrue(visible.IsEmpty);
+        }
+
+        [TestMethod]
+        public void Expand_Adds_A_Margin_But_Stays_Inside_The_Image()
+        {
+            Assert.AreEqual(new Int32Rect(3500, 2750, 2000, 1000), ViewGeometry.Expand(new Int32Rect(4000, 3000, 1000, 500), 0.5, 10000, 7500));
+            Assert.AreEqual(new Int32Rect(0, 0, 1500, 750), ViewGeometry.Expand(new Int32Rect(0, 0, 1000, 500), 0.5, 10000, 7500));
+            Assert.AreEqual(new Int32Rect(8500, 6750, 1500, 750), ViewGeometry.Expand(new Int32Rect(9000, 7000, 1000, 500), 0.5, 10000, 7500));
+        }
+
+        [TestMethod]
+        public void Contains_Checks_The_Whole_Rectangle()
+        {
+            var outer = new Int32Rect(100, 100, 1000, 800);
+
+            Assert.IsTrue(ViewGeometry.Contains(outer, new Int32Rect(100, 100, 1000, 800)));
+            Assert.IsTrue(ViewGeometry.Contains(outer, new Int32Rect(500, 500, 10, 10)));
+            Assert.IsFalse(ViewGeometry.Contains(outer, new Int32Rect(99, 500, 10, 10)));
+            Assert.IsFalse(ViewGeometry.Contains(outer, new Int32Rect(1000, 500, 101, 10)));
+            Assert.IsFalse(ViewGeometry.Contains(Int32Rect.Empty, new Int32Rect(0, 0, 1, 1)));
+        }
+
+        [TestMethod]
         public void Empty_Image_Is_Treated_As_Centered()
         {
             AssertPoint(new Point(0.5, 0.5), ViewGeometry.ToImageRatio(new Point(10, 10), new Size(0, 0), 0, 1.0, default));

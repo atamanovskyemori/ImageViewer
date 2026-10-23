@@ -71,6 +71,138 @@ namespace ImageViewer.Tests.Imaging
             }
         }
 
+        /// <summary>Like FakeFrames, but its state ("the last frame made") can be saved and restored</summary>
+        private sealed class CheckpointFrames(int count, int window, int checkpoints)
+            : StreamingFrames(Enumerable.Repeat(TimeSpan.FromMilliseconds(100), count).ToList(), window, checkpoints)
+        {
+            private readonly List<int> _produced = [];
+            private readonly List<int> _restored = [];
+            private int _resets;
+            private int _last = -1;
+
+            public int[] Produced
+            {
+                get { lock (_produced) return _produced.ToArray(); }
+            }
+
+            public int[] Restored
+            {
+                get { lock (_restored) return _restored.ToArray(); }
+            }
+
+            public int Resets => Volatile.Read(ref _resets);
+
+            protected override void Reset()
+            {
+                Interlocked.Increment(ref _resets);
+                _last = -1;
+            }
+
+            protected override object? SaveState() => _last;
+
+            protected override void RestoreState(object state)
+            {
+                _last = (int)state;
+                lock (_restored)
+                {
+                    _restored.Add(_last);
+                }
+            }
+
+            protected override BitmapSource Produce(int index)
+            {
+                // Frames must follow on from the state: right after Reset (0) or after the last one
+                Assert.AreEqual(_last + 1, index, "made out of order");
+                _last = index;
+                lock (_produced)
+                {
+                    _produced.Add(index);
+                }
+                return Marker(index);
+            }
+        }
+
+        private static void PlayTo(StreamingFrames frames, int index)
+        {
+            frames.Prepare(index);
+            WaitUntil(() => frames.Get(index) is { } f && IndexOf(f) == index);
+        }
+
+        [TestMethod]
+        public void Checkpoints_Are_Spread_Over_The_Animation()
+        {
+            // 60 frames, 5 checkpoints: one every 10 frames (after frames 9, 19, 29, 39, 49)
+            var frames = new CheckpointFrames(count: 60, window: 4, checkpoints: 5);
+
+            PlayTo(frames, 55);
+
+            Assert.AreEqual(5, frames.CheckpointCount);
+        }
+
+        [TestMethod]
+        public void Going_Back_Starts_From_The_Nearest_Checkpoint()
+        {
+            var frames = new CheckpointFrames(count: 60, window: 4, checkpoints: 5);
+            PlayTo(frames, 45);
+            int before = frames.Produced.Length;
+
+            PlayTo(frames, 25);
+
+            CollectionAssert.AreEqual(new[] { 19 }, frames.Restored, "restored the state after frame 19");
+            Assert.AreEqual(1, frames.Resets, "did not start over from the first frame");
+            var remade = frames.Produced[before..];
+            Assert.AreEqual(20, remade[0], string.Join(",", remade));
+            Assert.IsTrue(remade.Length <= 9, $"made {remade.Length} frames again");
+        }
+
+        [TestMethod]
+        public void Going_Back_Before_The_First_Checkpoint_Starts_Over()
+        {
+            var frames = new CheckpointFrames(count: 60, window: 4, checkpoints: 5);
+            PlayTo(frames, 45);
+
+            PlayTo(frames, 3);
+
+            Assert.AreEqual(0, frames.Restored.Length);
+            Assert.AreEqual(2, frames.Resets);
+        }
+
+        [TestMethod]
+        public void Going_Forward_Continues_Without_Restoring()
+        {
+            var frames = new CheckpointFrames(count: 60, window: 4, checkpoints: 5);
+            PlayTo(frames, 21);
+
+            PlayTo(frames, 26);
+
+            Assert.AreEqual(0, frames.Restored.Length, "just went on from where it was");
+            Assert.AreEqual(1, frames.Resets);
+        }
+
+        [TestMethod]
+        public void A_Far_Jump_Ahead_Uses_A_Checkpoint_Too()
+        {
+            // After going back to frame 2 (start over), jumping to 55 can restart from the checkpoint after 49
+            var frames = new CheckpointFrames(count: 60, window: 4, checkpoints: 5);
+            PlayTo(frames, 52);
+            PlayTo(frames, 2);
+            int before = frames.Produced.Length;
+
+            PlayTo(frames, 55);
+
+            CollectionAssert.AreEqual(new[] { 49 }, frames.Restored);
+            Assert.AreEqual(50, frames.Produced[before]);
+        }
+
+        [TestMethod]
+        [DataRow(6_000_000L, 256_000_000L, 5)]
+        [DataRow(100_000L, 256_000_000L, 32)]
+        [DataRow(100_000_000L, 256_000_000L, 0)]
+        public void Checkpoints_Fit_In_An_Eighth_Of_The_Limit(long canvasBytes, long maxBytes, int expected)
+        {
+            Assert.AreEqual(expected, AnimationLimits.StreamingCheckpoints(canvasBytes, maxBytes));
+        }
+
         [TestMethod]
         public void Frames_Are_Made_In_Order_From_The_Start()
         {
@@ -266,6 +398,35 @@ namespace ImageViewer.Tests.Imaging
                 int index = i;
                 WaitUntil(() => streamed.Animation.Get(index) is { } f && PixelsOf(f).SequenceEqual(expected));
             }
+        }
+
+        [TestMethod]
+        public void Gif_Frames_Made_From_A_Checkpoint_Match_The_Normal_Way()
+        {
+            // 12 frames; the limit fits 1 checkpoint (after frame 5) but not all frames
+            var colors = new[] { Colors.Red, Colors.Lime, Colors.Blue, Colors.Yellow, Colors.Cyan, Colors.Magenta,
+                                 Colors.Orange, Colors.Purple, Colors.Teal, Colors.Navy, Colors.Olive, Colors.Gray };
+            var gif = AnimatedGif(colors);
+            long oneCanvas = 40 * 30 * 4;
+            long limit = oneCanvas * 8; // window 3 (1/4 of the limit is 2 canvases, at least 3), 1 checkpoint (1/8)
+
+            var full = new WicImageDecoder(maxAnimationBytes: long.MaxValue).Decode(gif, 0);
+            var streamed = new WicImageDecoder(maxAnimationBytes: limit).Decode(gif, 0);
+            var frames = (StreamingFrames)streamed.Animation!;
+
+            // Play to the end, then step back to frame 7: made again from the checkpoint after frame 5
+            for (int i = 0; i < 12; i++)
+            {
+                var expected = PixelsOf(full.Frames![i].Image);
+                frames.Prepare(i);
+                int index = i;
+                WaitUntil(() => frames.Get(index) is { } f && PixelsOf(f).SequenceEqual(expected));
+            }
+            Assert.AreEqual(1, frames.CheckpointCount);
+
+            var seven = PixelsOf(full.Frames![7].Image);
+            frames.Prepare(7);
+            WaitUntil(() => frames.Get(7) is { } f && PixelsOf(f).SequenceEqual(seven));
         }
 
         [TestMethod]

@@ -53,6 +53,22 @@ public sealed class GifFrameComposer
     public int Stride => Width * 4;
 
     /// <summary>
+    /// 今の状態（次のコマを重ねる前のキャンバス）を写して返す。
+    /// <see cref="RestoreState"/> で戻せば、そこから続きのコマを作れる（省メモリ再生で、途中から作り直すため）
+    /// </summary>
+    public byte[] SaveState() => (byte[])_canvas.Clone();
+
+    /// <summary><see cref="SaveState"/> で取っておいた状態に戻す（渡した配列は書き換えない）</summary>
+    public void RestoreState(byte[] state)
+    {
+        if (state.Length != _canvas.Length)
+        {
+            throw new ArgumentException("キャンバスの大きさが違います。", nameof(state));
+        }
+        _canvas = (byte[])state.Clone();
+    }
+
+    /// <summary>
     /// コマを1枚重ねて、そのコマを表示したときのキャンバス全体（コピー）を返す。
     /// 返したあとで Disposal に従ってキャンバスを片付け、次のコマに備える。
     /// </summary>

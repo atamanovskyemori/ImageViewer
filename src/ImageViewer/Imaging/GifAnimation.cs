@@ -77,10 +77,11 @@ public static class GifAnimation
             // 全コマは持てない。1コマ目はもうできているので、残りは再生しながら作る
             var delays = infos.Select(i => AnimationLimits.NormalizeDelay(i.Delay)).ToList();
             int window = AnimationLimits.StreamingWindow(oneCanvas, maxBytes);
-            var streaming = new GifStreamingFrames(data, infos, canvasWidth, canvasHeight, delays, window);
+            int checkpoints = AnimationLimits.StreamingCheckpoints(oneCanvas, maxBytes);
+            var streaming = new GifStreamingFrames(data, infos, canvasWidth, canvasHeight, delays, window, checkpoints);
             return new DecodedImage(
                 result[0].Image, streaming, loopCount,
-                byteSize: data.Length + oneCanvas * window,
+                byteSize: data.Length + oneCanvas * (window + checkpoints),
                 notice: AnimationLimits.StreamingNotice(required, maxBytes));
         }
 
@@ -91,11 +92,20 @@ public static class GifAnimation
     /// 再生しながら GIF のコマを作る。GIF ファイルの中身を持っておき、作るたびに WIC で読む
     /// （WIC のデコーダは作ったスレッドでしか使えないので、作り始めるたびに作り直す）。
     /// 合成用のキャンバス（<see cref="GifFrameComposer"/>）は、最初から作り直すときに空にする。
+    /// キャンバスは写して取っておけるので、手前に戻るときは、取っておいたいちばん近いところから作り直す。
     /// </summary>
     private sealed class GifStreamingFrames(
-        byte[] data, IReadOnlyList<FrameInfo> infos, int width, int height, IReadOnlyList<TimeSpan> delays, int window)
-        : StreamingFrames(delays, window)
+        byte[] data, IReadOnlyList<FrameInfo> infos, int width, int height, IReadOnlyList<TimeSpan> delays, int window, int checkpoints)
+        : StreamingFrames(delays, window, checkpoints)
     {
+        protected override object? SaveState() => _composer?.SaveState();
+
+        protected override void RestoreState(object state)
+        {
+            _composer ??= new GifFrameComposer(width, height);
+            _composer.RestoreState((byte[])state);
+        }
+
         private GifFrameComposer? _composer;
         private MemoryStream? _stream;
         private BitmapDecoder? _decoder;

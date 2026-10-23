@@ -12,6 +12,34 @@ namespace ImageViewer.Tests.Imaging
         private static readonly (byte B, byte G, byte R, byte A) Green = (0, 255, 0, 255);
 
         [TestMethod]
+        public void Restoring_A_Saved_State_Makes_The_Same_Frames_Again()
+        {
+            // Frames 2 and 3 depend on what came before (disposal), so they can only be made again from a saved state
+            var composer = new GifFrameComposer(2, 1);
+            composer.Compose(Solid(2, 1, Red), 0, 0, 2, 1, GifDisposal.DoNotDispose);
+            var saved = composer.SaveState();
+
+            var second = composer.Compose(Solid(1, 1, Blue), 1, 0, 1, 1, GifDisposal.RestorePrevious);
+            var third = composer.Compose(Solid(1, 1, Green), 0, 0, 1, 1, GifDisposal.RestoreBackground);
+
+            composer.RestoreState(saved);
+            CollectionAssert.AreEqual(second, composer.Compose(Solid(1, 1, Blue), 1, 0, 1, 1, GifDisposal.RestorePrevious));
+            CollectionAssert.AreEqual(third, composer.Compose(Solid(1, 1, Green), 0, 0, 1, 1, GifDisposal.RestoreBackground));
+
+            // The saved state itself is not changed by going on, so it can be used again
+            composer.RestoreState(saved);
+            CollectionAssert.AreEqual(second, composer.Compose(Solid(1, 1, Blue), 1, 0, 1, 1, GifDisposal.RestorePrevious));
+        }
+
+        [TestMethod]
+        public void Restoring_A_State_Of_Another_Size_Throws()
+        {
+            var composer = new GifFrameComposer(2, 2);
+
+            Assert.ThrowsExactly<ArgumentException>(() => composer.RestoreState(new byte[4]));
+        }
+
+        [TestMethod]
         public void First_Frame_Is_Drawn_At_Its_Offset_On_Transparent_Canvas()
         {
             var composer = new GifFrameComposer(4, 4);

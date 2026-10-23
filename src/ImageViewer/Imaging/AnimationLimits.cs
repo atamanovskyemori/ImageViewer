@@ -37,6 +37,13 @@ public static class AnimationLimits
     public static int StreamingWindow(long frameBytes, long maxBytes) =>
         (int)Math.Clamp(frameBytes > 0 ? maxBytes / 4 / frameBytes : 3, 3, 16);
 
+    /// <summary>
+    /// 再生しながら作るときに、途中の状態（手前に戻るときの出発点）を取っておく数。上限の 1/8 に収まる数（0〜32）。
+    /// 1つあたり、キャンバス1枚ぶんのメモリを使う
+    /// </summary>
+    public static int StreamingCheckpoints(long canvasBytes, long maxBytes) =>
+        (int)Math.Clamp(canvasBytes > 0 ? maxBytes / 8 / canvasBytes : 0, 0, 32);
+
     /// <summary>上限を超えて1枚目だけにしたときの、ステータスバー用の説明</summary>
     public static string TooLargeNotice(long requiredBytes, long maxBytes) =>
         $"アニメ省略（{ToMB(requiredBytes)}MB > 上限 {ToMB(maxBytes)}MB）";

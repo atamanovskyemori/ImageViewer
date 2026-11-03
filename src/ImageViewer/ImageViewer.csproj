@@ -10,6 +10,8 @@
     <RootNamespace>ImageViewer</RootNamespace>
     <AssemblyName>ImageViewer</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- アプリのアイコン（エクスプローラー・タスクバー・ウィンドウ）。icon\make-icon.ps1 で icon\icon.svg から作る -->
+    <ApplicationIcon>ImageViewer.ico</ApplicationIcon>
     <Version>0.1.0</Version>
     <!-- ランタイム前提の軽量exe（framework-dependent）。実行には .NET 10 Desktop Runtime が必要 -->
     <SelfContained>false</SelfContained>

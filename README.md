@@ -19,7 +19,12 @@ exe は x64 固定（同梱する libwebp.dll に合わせている）。
 ```
 ImageViewer.sln
 native/x64/                   ← libwebp 系の DLL 3つ（リポジトリに含めている）
+icon/
+  icon.svg                    アプリのアイコンの元の絵（空と丘の風景の中に「IV」）
+  icon-small.svg              16px 用の絵（ピクセルのマス目に合わせたもの）
+  make-icon.ps1               SVG から src/ImageViewer/ImageViewer.ico を作る
 src/ImageViewer/
+  ImageViewer.ico             アプリのアイコン（make-icon.ps1 で作ったもの。csproj の ApplicationIcon）
   App.xaml(.cs)               起動処理（コマンドライン引数でファイルを開く。起動中なら、そちらに渡して終わる）
   SingleInstance.cs           起動を1つにまとめる（名前付きミューテックス・名前付きパイプ）
   MainWindow.xaml(.cs)        表示・ズーム・パン・キー操作
@@ -381,6 +386,18 @@ Z かツールバーの鍵のボタンで、ズーム・表示位置・回転を
 - 読めない画像を挟んでも、その前に見ていた見え方を引き継ぐ
 - 固定している間は、画像の右上に「表示を固定中」と出す（全画面でツールバーが隠れていても分かるように。一覧を出している間は隠す）
 - 固定しているかは保存しない（起動したときはいつも固定していない）
+
+## アイコン
+
+空と丘の風景の中に「IV」が立っていて、V の谷間に太陽がある絵。exe・タスクバー・ウィンドウのアイコンになる。
+
+- 元の絵は `icon/icon.svg`（120×120）。16px だけは、縁がぼやけないようピクセルのマス目に合わせた `icon/icon-small.svg`（16×16）を使う
+- 絵を変えたら、Windows PowerShell で作り直してコミットする（16 / 20 / 24 / 32 / 40 / 48 / 64 / 256px を PNG のまま1つの .ico に入れる）
+  ```
+  powershell -ExecutionPolicy Bypass -File icon\make-icon.ps1
+  ```
+- `-PreviewDir フォルダ` を付けると、各サイズの PNG も書き出す（見え方の確認用）
+- スクリプトが読める SVG は、このアイコンに使っている分だけ（rect・circle・polygon・path・clip-path の g、色は fill の #RRGGBB）
 
 ## 画面構成
 

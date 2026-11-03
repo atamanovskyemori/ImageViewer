@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- 16px 用の icon.svg。縁がぼやけないよう、文字と太陽をピクセルのマス目に合わせ、太陽は大きめにしてある -->
+  <defs>
+    <clipPath id="tile"><rect width="16" height="16" rx="3"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="16" height="16" fill="#4299E1"/>
+    <path d="M0 12 Q4 10.5 8 11.5 Q12 10.5 16 11.5 V16 H0 Z" fill="#38A169"/>
+    <path d="M0 14 Q6 13 10 13.8 Q13 13.4 16 13.6 V16 H0 Z" fill="#2F855A"/>
+  </g>
+  <rect x="2" y="3" width="2" height="9" fill="#FFFFFF"/>
+  <polygon points="5,3 7,3 9,9 11,3 13,3 10,12 8,12" fill="#FFFFFF"/>
+  <rect x="8" y="3" width="2" height="2" fill="#F6E05E"/>
+</svg>

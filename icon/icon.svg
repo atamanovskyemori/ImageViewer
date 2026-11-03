@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- アプリのアイコン：空と丘の風景の中に「IV」。V の谷間に太陽。make-icon.ps1 で ImageViewer.ico にする -->
+  <defs>
+    <clipPath id="tile"><rect width="120" height="120" rx="26"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="120" height="120" fill="#4299E1"/>
+    <path d="M0 92 Q33 72 63 87 Q93 74 120 86 V120 H0 Z" fill="#38A169"/>
+    <path d="M0 106 Q40 94 75 104 Q100 98 120 102 V120 H0 Z" fill="#2F855A"/>
+  </g>
+  <rect x="18" y="25" width="16" height="70" fill="#FFFFFF"/>
+  <polygon points="42,25 60,25 72,70 84,25 102,25 80,95 64,95" fill="#FFFFFF"/>
+  <circle cx="72" cy="36" r="7" fill="#F6E05E"/>
+</svg>
